@@ -137,7 +137,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 <div class="main">
   <!-- ===== FORM ===== -->
   <div id="scr-form" class="screen active">
-    <input type="date" id="att-date" class="date-input">
+    <input type="date" id="att-date" class="date-input" onchange="loadDateData(this.value)">
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:#fff;border-radius:8px;padding:10px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
       <span style="font-size:.75rem;color:#6b7280;font-weight:600;width:100%;margin-bottom:2px">Referencias:</span>
       <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#10b981">P</span> Presente</span>
@@ -250,6 +250,43 @@ function go(screen,btn){
 }
 
 // ======================== FORM ========================
+async function loadDateData(fecha){
+  if(!fecha)return;
+  // 1) Try localStorage
+  const stored=localStorage.getItem('att_'+fecha);
+  if(stored){
+    try{
+      const recs=JSON.parse(stored);
+      if(recs&&recs.length>0){applyFormData(recs);toast('Datos del '+formatDateLong(fecha)+' cargados','success');return;}
+    }catch(e){}
+  }
+  // 2) Try Apps Script
+  if(scriptUrl){
+    try{
+      const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
+      const j=await r.json();
+      if(j.status==='success'&&j.data&&j.data.length>0){applyFormData(j.data);toast('Datos del '+formatDateLong(fecha)+' cargados','success');return;}
+    }catch(e){}
+  }
+  // No data: reset all to P
+  players.forEach((_,i)=>setStatus(i,'P'));
+}
+
+function applyFormData(records){
+  // Reset all to P first
+  players.forEach((_,i)=>setStatus(i,'P'));
+  // Build lookup map normalized name -> {estado, obs}
+  const map={};
+  records.forEach(r=>{map[norm(r.jugador)]={estado:r.estado,obs:r.observacion||''};});
+  players.forEach((p,i)=>{
+    const d=map[norm(p)];
+    if(d){
+      setStatus(i,d.estado);
+      if(d.estado==='J'&&d.obs){document.getElementById('obs-'+i).value=d.obs;}
+    }
+  });
+}
+
 function renderForm(){
   const c=document.getElementById('att-list');
   c.innerHTML='';
@@ -320,20 +357,20 @@ async function saveAttendance(){
     const key='att_'+data.fecha;
     localStorage.setItem(key,JSON.stringify(data.records));
 
-    // Save to Apps Script
+    // Save to Apps Script (overwrite: true deletes existing rows for this date first)
     if(scriptUrl){
       await fetch(scriptUrl,{
         method:'POST',mode:'no-cors',
         headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'saveAttendance',data:data.records})
+        body:JSON.stringify({action:'saveAttendance',data:data.records,overwrite:true})
       });
     }
 
     toast('Asistencia guardada','success');
     sendNotification('Asistencia guardada',`Se registró la asistencia del ${formatDateLong(data.fecha)}`);
 
-    // Reset form
-    players.forEach((_,i)=>setStatus(i,'P'));
+    // Keep form loaded with saved data (don't reset)
+    toast('✓ Guardado — podés seguir editando','success');
   }catch(e){
     toast('Error: '+e.message,'error');
   }finally{

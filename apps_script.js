@@ -67,7 +67,7 @@ function doPost(e) {
 
     switch (action) {
       case 'saveAttendance':
-        response = saveAttendanceData(data.data);
+        response = saveAttendanceData(data.data, data.overwrite === true);
         break;
       case 'addPlayer':
         response = addNewPlayer(data.name);
@@ -104,7 +104,7 @@ function doOptions(e) {
 /**
  * Save attendance records to the Asistencias_App sheet
  */
-function saveAttendanceData(records) {
+function saveAttendanceData(records, overwrite) {
   try {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     let sheet = spreadsheet.getSheetByName(ATTENDANCE_SHEET_NAME);
@@ -112,11 +112,26 @@ function saveAttendanceData(records) {
     // Create sheet if it doesn't exist
     if (!sheet) {
       sheet = spreadsheet.insertSheet(ATTENDANCE_SHEET_NAME);
-      // Add headers
       sheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación']);
     }
 
-    // Append each record
+    // If overwrite: delete all existing rows for this date before inserting
+    if (overwrite && records.length > 0) {
+      const fecha = records[0].fecha;
+      const values = sheet.getDataRange().getValues();
+      // Iterate backwards to safely delete rows
+      for (let i = values.length - 1; i >= 1; i--) {
+        const cellFecha = values[i][1];
+        const cellStr = cellFecha instanceof Date
+          ? cellFecha.toISOString().split('T')[0]
+          : cellFecha.toString();
+        if (cellStr === fecha) {
+          sheet.deleteRow(i + 1); // sheet rows are 1-indexed
+        }
+      }
+    }
+
+    // Append new records
     records.forEach(record => {
       sheet.appendRow([
         record.timestamp,
