@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a3a52">
+<link rel="manifest" href="manifest.json">
+<title>Asistencias Club</title>
+<style>
+:root {
+  --primary:#1a3a52; --primary-light:#2d5a7b; --primary-dark:#0f2536;
+  --green:#10b981; --green-bg:#d1fae5; --green-text:#065f46;
+  --blue:#3b82f6; --blue-bg:#dbeafe; --blue-text:#1e40af;
+  --yellow:#f59e0b; --yellow-bg:#fef3c7; --yellow-text:#92400e;
+  --red:#ef4444; --red-bg:#fee2e2; --red-text:#991b1b;
+  --gray:#6b7280; --gray-light:#f3f4f6; --border:#e5e7eb;
+  --radius:10px; --shadow:0 1px 3px rgba(0,0,0,0.08);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f9fafb;color:#1f2937;-webkit-tap-highlight-color:transparent}
+body{display:flex;flex-direction:column;padding-bottom:68px}
+
+.header{background:linear-gradient(135deg,var(--primary),var(--primary-light));color:#fff;padding:16px;position:sticky;top:0;z-index:50;box-shadow:0 2px 8px rgba(0,0,0,0.15)}
+.header h1{font-size:1.4rem;font-weight:700}
+.header small{opacity:.8;font-size:.8rem}
+
+.main{flex:1;padding:12px;max-width:600px;width:100%;margin:0 auto;overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+.screen{display:none} .screen.active{display:block;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* Nav */
+.nav{position:fixed;bottom:0;left:0;right:0;height:64px;background:#fff;border-top:1px solid var(--border);display:flex;z-index:50;box-shadow:0 -1px 6px rgba(0,0,0,0.06)}
+.nav button{flex:1;border:none;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:.7rem;font-weight:600;color:var(--gray);cursor:pointer;min-height:48px;transition:color .2s}
+.nav button.active{color:var(--primary)}
+.nav button .ico{font-size:1.4rem}
+
+/* Form */
+.date-input{width:100%;padding:12px;border:2px solid var(--border);border-radius:var(--radius);font-size:1rem;font-family:inherit;background:#fff;margin-bottom:12px}
+.date-input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(26,58,82,.12)}
+
+.player-card{background:#fff;border:2px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;box-shadow:var(--shadow);transition:border-color .2s}
+.player-card.status-P{border-left:4px solid var(--green)}
+.player-card.status-EA{border-left:4px solid var(--blue)}
+.player-card.status-J{border-left:4px solid var(--yellow)}
+.player-card.status-A{border-left:4px solid var(--red)}
+.player-top{display:flex;align-items:center;gap:10px}
+.player-card .name{flex:1;font-weight:600;font-size:.95rem}
+.status-btns{display:flex;gap:4px}
+.status-btns button{width:40px;height:40px;border:2px solid var(--border);border-radius:8px;font-weight:700;font-size:.8rem;cursor:pointer;background:#fff;color:var(--gray);transition:all .15s}
+.status-btns button.sel-P{background:var(--green);color:#fff;border-color:var(--green)}
+.status-btns button.sel-EA{background:var(--blue);color:#fff;border-color:var(--blue)}
+.status-btns button.sel-J{background:var(--yellow);color:#fff;border-color:var(--yellow)}
+.status-btns button.sel-A{background:var(--red);color:#fff;border-color:var(--red)}
+.obs-input{width:100%;margin-top:8px;padding:8px 10px;border:2px solid var(--yellow);border-radius:6px;font-size:.9rem;font-family:inherit;display:none}
+.obs-input.show{display:block}
+
+.btn{width:100%;padding:14px;border:none;border-radius:var(--radius);font-size:1rem;font-weight:700;cursor:pointer;margin-top:12px;min-height:48px;transition:all .15s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:active{background:var(--primary-dark);transform:scale(.98)}
+.btn-primary:disabled{background:var(--gray);opacity:.5}
+
+.toast{position:fixed;top:80px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:var(--radius);color:#fff;font-weight:600;font-size:.9rem;z-index:200;animation:toastIn .3s ease;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+.toast.success{background:var(--green)}
+.toast.error{background:var(--red)}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* Reports */
+.report-tabs{display:flex;gap:4px;margin-bottom:12px;background:#fff;border-radius:var(--radius);padding:4px;box-shadow:var(--shadow)}
+.report-tabs button{flex:1;padding:10px 8px;border:none;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer;background:transparent;color:var(--gray);transition:all .2s;min-height:44px}
+.report-tabs button.active{background:var(--primary);color:#fff}
+
+.period-sel{width:100%;padding:10px;border:2px solid var(--border);border-radius:var(--radius);font-size:.9rem;margin-bottom:12px;background:#fff;font-family:inherit}
+
+.card{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}
+.card-hdr{padding:12px 14px;font-weight:700;font-size:.95rem;border-bottom:1px solid var(--gray-light);display:flex;justify-content:space-between;align-items:center}
+.badge{font-size:.75rem;padding:3px 10px;border-radius:10px;font-weight:600}
+.badge-g{background:var(--green-bg);color:var(--green-text)}
+.badge-y{background:var(--yellow-bg);color:var(--yellow-text)}
+.badge-r{background:var(--red-bg);color:var(--red-text)}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px}
+.stat{text-align:center;padding:10px;background:var(--gray-light);border-radius:8px}
+.stat .n{font-size:1.6rem;font-weight:800}
+.stat .l{font-size:.7rem;color:var(--gray);margin-top:2px}
+
+/* Attendance Table */
+.att-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.att-tbl{width:100%;border-collapse:collapse;font-size:.8rem}
+.att-tbl th{background:var(--primary);color:#fff;padding:8px 4px;font-size:.7rem;white-space:nowrap;position:sticky;top:0}
+.att-tbl td{padding:6px 4px;text-align:center;border-bottom:1px solid var(--gray-light)}
+.att-tbl .nm{text-align:left;font-weight:600;padding-left:8px;white-space:nowrap;min-width:120px;position:sticky;left:0;background:#fff;z-index:1}
+.att-tbl thead .nm{background:var(--primary);z-index:2}
+.att-tbl tbody tr:hover td{background:#f0f7ff}
+.att-tbl tbody tr:hover .nm{background:#f0f7ff}
+.dot{display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff}
+.dot.P{background:var(--green)}.dot.EA{background:var(--blue)}.dot.J{background:var(--yellow)}.dot.A{background:var(--red)}.dot.none{background:#e5e7eb;color:#9ca3af}
+
+/* Player detail row */
+.p-row{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--gray-light);gap:10px}
+.p-row:last-child{border:none}
+.p-row .date{flex:1;font-size:.9rem;font-weight:500}
+.p-row .st{font-size:.85rem;font-weight:600}
+
+/* Players management */
+.add-row{display:flex;gap:8px;margin-bottom:16px}
+.add-row input{flex:1;padding:12px;border:2px solid var(--border);border-radius:var(--radius);font-size:1rem;font-family:inherit}
+.add-row button{padding:0 20px;min-height:48px}
+.mgmt-item{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px}
+.mgmt-item .act{font-size:.75rem;color:var(--green);font-weight:600}
+
+.config-box{background:var(--gray-light);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-top:20px}
+.config-box label{display:block;font-weight:600;font-size:.85rem;margin-bottom:6px}
+.config-box input{width:100%;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:.85rem;margin-bottom:8px;font-family:inherit}
+.config-box .hint{font-size:.75rem;color:var(--gray)}
+
+.btn-sm{padding:8px 16px;font-size:.85rem;border:none;border-radius:8px;cursor:pointer;font-weight:600;min-height:40px}
+.btn-warn{background:var(--yellow);color:#fff}
+.btn-sec{background:var(--border);color:#1f2937}
+
+.loading{text-align:center;padding:40px;color:var(--gray)}
+.loading .sp{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media(max-width:400px){.att-tbl{font-size:.7rem}.att-tbl .nm{min-width:90px}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1 id="hdr-title">Asistencias</h1>
+  <small id="hdr-sub">Registrar asistencia</small>
+</div>
+
+<div class="main">
+  <!-- ===== FORM ===== -->
+  <div id="scr-form" class="screen active">
+    <input type="date" id="att-date" class="date-input">
+    <div id="att-list"></div>
+    <button class="btn btn-primary" id="btn-save" onclick="saveAttendance()">Guardar Asistencia</button>
+  </div>
+
+  <!-- ===== REPORTS ===== -->
+  <div id="scr-reports" class="screen">
+    <div class="report-tabs">
+      <button class="active" onclick="setReport('semanal',this)">Semanal</button>
+      <button onclick="setReport('mensual',this)">Mensual</button>
+      <button onclick="setReport('jugador',this)">Por Jugador</button>
+    </div>
+    <select id="period-sel" class="period-sel" onchange="renderReport()"></select>
+    <select id="player-sel" class="period-sel" style="display:none" onchange="renderReport()"></select>
+    <div id="report-out"></div>
+  </div>
+
+  <!-- ===== PLAYERS ===== -->
+  <div id="scr-players" class="screen">
+    <div class="add-row">
+      <input type="text" id="new-name" placeholder="Nombre y Apellido">
+      <button class="btn btn-primary" onclick="addPlayer()">+</button>
+    </div>
+    <div id="mgmt-list"></div>
+    <div class="config-box">
+      <label>URL de Google Apps Script</label>
+      <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/...">
+      <p class="hint">Pegá la URL del Web App desplegado</p>
+      <button class="btn-sm btn-sec" style="margin-top:8px;width:100%" onclick="saveCfg()">Guardar Config</button>
+    </div>
+  </div>
+</div>
+
+<div class="nav">
+  <button class="active" onclick="go('form',this)"><span class="ico">📋</span>Asistencia</button>
+  <button onclick="go('reports',this)"><span class="ico">📊</span>Reportes</button>
+  <button onclick="go('players',this)"><span class="ico">👥</span>Jugadores</button>
+</div>
+
+<script>
+// ======================== CONFIG ========================
+const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
+const OLD_GID='341333262';
+const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+const DIAS_L=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+const DEFAULT_PLAYERS=[
+  'Bernaus Agustin','Bernaus Federico','Carranza Matias','Del Valle Jonatan',
+  'Diaz Jonatan','Fossarelli Antonio','Gomez Gustavo','Gomez Juan Pablo',
+  'Lazaneo Juan Manuel','Landriel Federico','Lecuima Esteban','Lencina Nicolas',
+  'Lovera Ignacio','Mendoza Alexis','Ñañez Ruben','Nieto Fabio Armando',
+  'Paireti Franco','Pochettino Dante','Sanchez Hernan','Vijarra Nahuel','Villaruel Daniel'
+];
+
+const ALIASES={
+  'DIAZ JONATAN CHANCLA':'DIAZ JONATAN',
+  'LECUIMA ESTEBAN KUN':'LECUIMA ESTEBAN',
+  'NIETO FABIO CATA':'NIETO FABIO ARMANDO',
+  'NIETO FABIO ARMANDO CATA':'NIETO FABIO ARMANDO',
+  'VILLARUEL DARIO CACO':'VILLARUEL DANIEL'
+};
+
+// ======================== STATE ========================
+let players=JSON.parse(localStorage.getItem('club_players')||'null')||[...DEFAULT_PLAYERS];
+let scriptUrl=localStorage.getItem('club_script_url')||'';
+let reportView='semanal';
+let allDays=[]; // [{date:'2026-03-16', players:{NOMBRE:status}}]
+let allObs={}; // {date:{NOMBRE:'obs text'}} — only for J status
+
+// ======================== INIT ========================
+document.addEventListener('DOMContentLoaded',async()=>{
+  document.getElementById('att-date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('cfg-url').value=scriptUrl;
+  // Sync player list from Apps Script (background, non-blocking UI)
+  if(scriptUrl){
+    try{
+      const r=await fetch(scriptUrl+'?action=getPlayers');
+      const j=await r.json();
+      if(j.status==='success'&&j.players&&j.players.length>0){
+        const remote=j.players.map(p=>p.nombre);
+        const merged=[...new Set([...DEFAULT_PLAYERS,...remote,...players])];
+        players=merged;
+        savePlayers();
+      }
+    }catch(e){}
+  }
+  renderForm();
+  renderMgmt();
+  requestNotificationPermission();
+});
+
+// ======================== NAVIGATION ========================
+function go(screen,btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('scr-'+screen).classList.add('active');
+  document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  const titles={form:'Asistencias',reports:'Reportes',players:'Jugadores'};
+  const subs={form:'Registrar asistencia',reports:'Ver estadísticas',players:'Gestionar plantel'};
+  document.getElementById('hdr-title').textContent=titles[screen];
+  document.getElementById('hdr-sub').textContent=subs[screen];
+  if(screen==='reports')loadReports();
+}
+
+// ======================== FORM ========================
+function renderForm(){
+  const c=document.getElementById('att-list');
+  c.innerHTML='';
+  players.forEach((p,i)=>{
+    const div=document.createElement('div');
+    div.className='player-card status-P';
+    div.id='pc-'+i;
+    div.innerHTML=`
+      <div class="player-top">
+        <span class="name">${p}</span>
+        <div class="status-btns">
+          <button class="sel-P" onclick="setStatus(${i},'P')">P</button>
+          <button onclick="setStatus(${i},'E/A')">E/A</button>
+          <button onclick="setStatus(${i},'J')">J</button>
+          <button onclick="setStatus(${i},'A')">A</button>
+        </div>
+      </div>
+      <input type="text" class="obs-input" id="obs-${i}" placeholder="Motivo de justificación...">
+    `;
+    c.appendChild(div);
+  });
+}
+
+function setStatus(idx,st){
+  const card=document.getElementById('pc-'+idx);
+  card.className='player-card status-'+(st==='E/A'?'EA':st);
+  card.querySelectorAll('.status-btns button').forEach(b=>{
+    b.className='';
+    const bst=b.textContent.trim();
+    if(bst===st)b.className='sel-'+(st==='E/A'?'EA':st);
+  });
+  const obs=document.getElementById('obs-'+idx);
+  obs.className='obs-input'+(st==='J'?' show':'');
+  if(st!=='J')obs.value='';
+}
+
+function getFormData(){
+  const fecha=document.getElementById('att-date').value;
+  if(!fecha)return null;
+  const ts=new Date().toISOString();
+  const records=[];
+  players.forEach((p,i)=>{
+    const card=document.getElementById('pc-'+i);
+    const selBtn=card.querySelector('.status-btns button[class*="sel-"]');
+    let st='P';
+    if(selBtn){
+      const cls=selBtn.className;
+      if(cls.includes('sel-EA'))st='E/A';
+      else if(cls.includes('sel-J'))st='J';
+      else if(cls.includes('sel-A'))st='A';
+      else st='P';
+    }
+    const obs=document.getElementById('obs-'+i).value.trim();
+    records.push({timestamp:ts,fecha,jugador:p,estado:st,observacion:obs});
+  });
+  return {fecha,timestamp:ts,records};
+}
+
+async function saveAttendance(){
+  const data=getFormData();
+  if(!data){toast('Elegí una fecha','error');return;}
+
+  const btn=document.getElementById('btn-save');
+  btn.disabled=true;btn.textContent='Guardando...';
+
+  try{
+    // Save to localStorage
+    const key='att_'+data.fecha;
+    localStorage.setItem(key,JSON.stringify(data.records));
+
+    // Save to Apps Script
+    if(scriptUrl){
+      await fetch(scriptUrl,{
+        method:'POST',mode:'no-cors',
+        headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'saveAttendance',data:data.records})
+      });
+    }
+
+    toast('Asistencia guardada','success');
+    sendNotification('Asistencia guardada',`Se registró la asistencia del ${formatDateLong(data.fecha)}`);
+
+    // Reset form
+    players.forEach((_,i)=>setStatus(i,'P'));
+  }catch(e){
+    toast('Error: '+e.message,'error');
+  }finally{
+    btn.disabled=false;btn.textContent='Guardar Asistencia';
+  }
+}
+
+// ======================== REPORTS ========================
+function setReport(view,btn){
+  reportView=view;
+  document.querySelectorAll('.report-tabs button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('player-sel').style.display=view==='jugador'?'':'none';
+  buildPeriodSelector();
+  renderReport();
+}
+
+async function loadReports(){
+  const out=document.getElementById('report-out');
+  out.innerHTML='<div class="loading"><div class="sp"></div>Cargando datos...</div>';
+  allDays=[];
+
+  try{
+    // 1) Fetch old form data via gviz
+    const url=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${OLD_GID}`;
+    let text;
+    try{
+      const r=await fetch(url);text=await r.text();
+    }catch(e){text=null;}
+
+    if(text){
+      const m=text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/);
+      if(m){
+        const json=JSON.parse(m[1]);
+        const rows=json.table.rows||[];
+        const byDate={};
+        for(const row of rows){
+          const cells=row.c;if(!cells||!cells[1])continue;
+          let ds=parseGvizDate(cells[1]);
+          if(!ds)continue;
+          const raw=cells[2]?(cells[2].v||''):'';
+          const names=raw.split(',').map(n=>norm(n)).filter(n=>n);
+          if(!byDate[ds])byDate[ds]={};
+          names.forEach(n=>{byDate[ds][n]='P';});
+        }
+        for(const[date,pmap]of Object.entries(byDate)){
+          allDays.push({date,players:pmap});
+        }
+      }
+    }
+
+    // 2) Load from localStorage (new app data)
+    for(let i=0;i<365;i++){
+      const d=new Date();d.setDate(d.getDate()-i);
+      const ds=d.toISOString().split('T')[0];
+      const stored=localStorage.getItem('att_'+ds);
+      if(stored){
+        try{
+          const recs=JSON.parse(stored);
+          const pmap={};
+          recs.forEach(r=>{
+            pmap[norm(r.jugador)]=r.estado;
+            if(r.estado==='J'&&r.observacion){
+              if(!allObs[ds])allObs[ds]={};
+              allObs[ds][norm(r.jugador)]=r.observacion;
+            }
+          });
+          // Merge or replace: app data overrides old form data
+          const existing=allDays.find(x=>x.date===ds);
+          if(existing){Object.assign(existing.players,pmap);}
+          else{allDays.push({date:ds,players:pmap});}
+        }catch(e){}
+      }
+    }
+
+    // 3) Also try to load from Apps Script new sheet
+    if(scriptUrl){
+      try{
+        const r=await fetch(scriptUrl+'?action=getAllAttendance');
+        const j=await r.json();
+        if(j.status==='success'&&j.data){
+          const byDate={};
+          j.data.forEach(rec=>{
+            if(!byDate[rec.fecha])byDate[rec.fecha]={};
+            byDate[rec.fecha][norm(rec.jugador)]=rec.estado;
+            if(rec.estado==='J'&&rec.observacion){
+              if(!allObs[rec.fecha])allObs[rec.fecha]={};
+              allObs[rec.fecha][norm(rec.jugador)]=rec.observacion;
+            }
+          });
+          for(const[date,pmap]of Object.entries(byDate)){
+            const existing=allDays.find(x=>x.date===date);
+            if(existing){Object.assign(existing.players,pmap);}
+            else{allDays.push({date,players:pmap});}
+          }
+        }
+      }catch(e){}
+    }
+
+    allDays.sort((a,b)=>a.date.localeCompare(b.date));
+
+    // Build player select
+    const psel=document.getElementById('player-sel');
+    psel.innerHTML='';
+    const allP=new Set();
+    allDays.forEach(d=>Object.keys(d.players).forEach(p=>allP.add(p)));
+    players.forEach(p=>allP.add(norm(p)));
+    [...allP].sort().forEach(p=>{
+      const o=document.createElement('option');o.value=p;o.textContent=displayName(p);psel.appendChild(o);
+    });
+
+    buildPeriodSelector();
+    renderReport();
+  }catch(e){
+    out.innerHTML=`<div class="card" style="padding:20px;text-align:center;color:var(--red)">Error cargando datos: ${e.message}</div>`;
+  }
+}
+
+function buildPeriodSelector(){
+  const sel=document.getElementById('period-sel');
+  sel.innerHTML='';
+  if(reportView==='mensual'){
+    const months=[...new Set(allDays.map(d=>d.date.substring(0,7)))].sort().reverse();
+    months.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=formatMonth(m);sel.appendChild(o);});
+  }else{
+    const weeks=[...new Set(allDays.map(d=>weekKey(d.date)))].sort().reverse();
+    const ao=document.createElement('option');ao.value='all';ao.textContent='Todas las semanas';sel.appendChild(ao);
+    weeks.forEach(w=>{const o=document.createElement('option');o.value=w;o.textContent=formatWeek(w);sel.appendChild(o);});
+  }
+}
+
+function renderReport(){
+  if(reportView==='semanal')renderWeekly();
+  else if(reportView==='mensual')renderMonthly();
+  else renderPlayer();
+}
+
+function renderWeekly(){
+  const out=document.getElementById('report-out');
+  const sel=document.getElementById('period-sel').value;
+  let data=sel==='all'?allDays:allDays.filter(d=>weekKey(d.date)===sel);
+  if(!data.length){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos para este período.</div>';return;}
+
+  const total=data.length;
+  const allP=[...new Set([...players.map(p=>norm(p)),...data.flatMap(d=>Object.keys(d.players))])].sort();
+
+  // Calc attendance
+  const att={};
+  allP.forEach(p=>{att[p]={count:0};});
+  data.forEach(d=>{
+    Object.entries(d.players).forEach(([p,st])=>{
+      if(!att[p])att[p]={count:0};
+      if(st==='P'||st==='E/A')att[p].count++;
+    });
+  });
+
+  const sortedP=allP.sort((a,b)=>(att[b]?.count||0)-(att[a]?.count||0));
+  const avgPct=sortedP.length?Math.round(sortedP.reduce((s,p)=>s+((att[p]?.count||0)/total*100),0)/sortedP.length):0;
+  const bc=avgPct>=75?'badge-g':avgPct>=50?'badge-y':'badge-r';
+
+  let h=`<div class="card"><div class="card-hdr">${sel==='all'?'Resumen General':'Semana '+formatWeek(sel)}<span class="badge ${bc}">${avgPct}% prom</span></div>
+    <div class="stats">
+      <div class="stat"><div class="n">${total}</div><div class="l">Prácticas</div></div>
+      <div class="stat"><div class="n">${sortedP.length}</div><div class="l">Jugadores</div></div>
+      <div class="stat"><div class="n">${avgPct}%</div><div class="l">Asistencia</div></div>
+    </div></div>`;
+
+  h+=`<div class="card"><div class="card-hdr">Detalle por Jugador</div><div class="att-wrap"><table class="att-tbl"><thead><tr><th class="nm">Jugador</th>`;
+  data.forEach(d=>{h+=`<th>${formatDateShort(d.date)}</th>`;});
+  h+=`<th>Total</th><th>%</th></tr></thead><tbody>`;
+
+  sortedP.forEach(p=>{
+    const pct=Math.round((att[p]?.count||0)/total*100);
+    const col=pctColor(pct);
+    h+=`<tr><td class="nm">${displayName(p)}</td>`;
+    data.forEach(d=>{
+      const st=d.players[p]||'';
+      if(st){
+        const cls=st==='E/A'?'EA':st;
+        h+=`<td><span class="dot ${cls}">${st}</span></td>`;
+      }else{
+        h+=`<td><span class="dot none">-</span></td>`;
+      }
+    });
+    h+=`<td style="font-weight:600">${att[p]?.count||0}/${total}</td>`;
+    h+=`<td style="font-weight:700;color:${col}">${pct}%</td></tr>`;
+  });
+  h+=`</tbody></table></div></div>`;
+  out.innerHTML=h;
+}
+
+function renderMonthly(){
+  const out=document.getElementById('report-out');
+  const sel=document.getElementById('period-sel').value;
+  const data=allDays.filter(d=>d.date.substring(0,7)===sel);
+  if(!data.length){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos para este mes.</div>';return;}
+
+  const total=data.length;
+  const allP=[...new Set([...players.map(p=>norm(p)),...data.flatMap(d=>Object.keys(d.players))])].sort();
+
+  // By week
+  const weeks={};
+  data.forEach(d=>{const w=weekKey(d.date);if(!weeks[w])weeks[w]=[];weeks[w].push(d);});
+  const wKeys=Object.keys(weeks).sort();
+
+  // Overall
+  const att={};
+  allP.forEach(p=>{att[p]=0;});
+  data.forEach(d=>Object.entries(d.players).forEach(([p,st])=>{if(!att.hasOwnProperty(p))att[p]=0;if(st==='P'||st==='E/A')att[p]++;}));
+  const sortedP=allP.sort((a,b)=>(att[b]||0)-(att[a]||0));
+  const avgPct=sortedP.length?Math.round(sortedP.reduce((s,p)=>s+(att[p]/total*100),0)/sortedP.length):0;
+
+  let h=`<div class="card"><div class="card-hdr">${formatMonth(sel)}<span class="badge ${avgPct>=75?'badge-g':avgPct>=50?'badge-y':'badge-r'}">${avgPct}% prom</span></div>
+    <div class="stats">
+      <div class="stat"><div class="n">${total}</div><div class="l">Prácticas</div></div>
+      <div class="stat"><div class="n">${wKeys.length}</div><div class="l">Semanas</div></div>
+      <div class="stat"><div class="n">${avgPct}%</div><div class="l">Asistencia</div></div>
+    </div></div>`;
+
+  // Week cards
+  wKeys.forEach((wk,wi)=>{
+    const wd=weeks[wk];const wt=wd.length;
+    const wa={};allP.forEach(p=>{wa[p]=0;});
+    wd.forEach(d=>Object.entries(d.players).forEach(([p,st])=>{if(!wa.hasOwnProperty(p))wa[p]=0;if(st==='P'||st==='E/A')wa[p]++;}));
+    const wavg=allP.length?Math.round(allP.reduce((s,p)=>s+(wa[p]/wt*100),0)/allP.length):0;
+
+    h+=`<div class="card"><div class="card-hdr">Semana ${wi+1}: ${formatWeek(wk)}<span class="badge ${wavg>=75?'badge-g':wavg>=50?'badge-y':'badge-r'}">${wavg}% · ${wt} prác.</span></div>`;
+    sortedP.forEach(p=>{
+      const pct=Math.round(wa[p]/wt*100);
+      h+=`<div class="p-row"><span class="date">${displayName(p)}</span><span class="st">${wa[p]}/${wt}</span><span class="st" style="min-width:40px;text-align:right;color:${pctColor(pct)}">${pct}%</span></div>`;
+    });
+    h+=`</div>`;
+  });
+
+  // Monthly totals
+  h+=`<div class="card"><div class="card-hdr">Total del Mes</div>`;
+  sortedP.forEach(p=>{
+    const pct=Math.round(att[p]/total*100);
+    h+=`<div class="p-row"><span class="date">${displayName(p)}</span><span class="st">${att[p]}/${total}</span><span class="st" style="min-width:40px;text-align:right;color:${pctColor(pct)}">${pct}%</span></div>`;
+  });
+  h+=`</div>`;
+  out.innerHTML=h;
+}
+
+function renderPlayer(){
+  const out=document.getElementById('report-out');
+  const pk=document.getElementById('player-sel').value;
+  const sel=document.getElementById('period-sel').value;
+  if(!pk){out.innerHTML='<div class="card" style="padding:20px;text-align:center">Seleccioná un jugador</div>';return;}
+
+  let data=sel==='all'?allDays:allDays.filter(d=>weekKey(d.date)===sel);
+  const total=data.length;
+  let attended=0;
+  const details=[];
+  data.forEach(d=>{
+    const st=d.players[pk]||'A';
+    const pres=(st==='P'||st==='E/A');
+    if(pres)attended++;
+    const obs=(allObs[d.date]&&allObs[d.date][pk])||'';
+    details.push({date:d.date,status:st,obs,present:pres});
+  });
+  const pct=total?Math.round(attended/total*100):0;
+
+  let h=`<div class="card"><div class="card-hdr">${displayName(pk)}<span class="badge ${pct>=75?'badge-g':pct>=50?'badge-y':'badge-r'}">${pct}%</span></div>
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="n" style="color:var(--green)">${attended}</div><div class="l">Presentes</div></div>
+      <div class="stat"><div class="n" style="color:var(--red)">${total-attended}</div><div class="l">Ausencias</div></div>
+      <div class="stat"><div class="n">${total}</div><div class="l">Prácticas</div></div>
+      <div class="stat"><div class="n" style="color:${pctColor(pct)}">${pct}%</div><div class="l">Asistencia</div></div>
+    </div></div>`;
+
+  h+=`<div class="card"><div class="card-hdr">Historial</div>`;
+  details.forEach(d=>{
+    const cls=d.status==='E/A'?'EA':d.status;
+    const stLabel={P:'Presente','E/A':'Entrena Afuera',J:'Justificado',A:'Ausente'}[d.status]||d.status;
+    const obsHtml=d.status==='J'&&d.obs?`<span style="font-size:.78rem;color:var(--gray);font-style:italic;display:block;margin-top:2px">"${d.obs}"</span>`:'';
+    h+=`<div class="p-row" style="flex-wrap:wrap"><span class="date">${formatDateLong(d.date)}</span><div style="display:flex;flex-direction:column;align-items:flex-end"><div style="display:flex;align-items:center;gap:6px"><span class="dot ${cls}">${d.status}</span><span class="st" style="color:${d.present?'var(--green)':'var(--red)'}">${stLabel}</span></div>${obsHtml}</div></div>`;
+  });
+  h+=`</div>`;
+  out.innerHTML=h;
+}
+
+// ======================== PLAYERS MGMT ========================
+function renderMgmt(){
+  const c=document.getElementById('mgmt-list');
+  c.innerHTML='';
+  players.forEach((p,i)=>{
+    const d=document.createElement('div');d.className='mgmt-item';
+    d.innerHTML=`<span>${p}</span><button class="btn-sm btn-warn" onclick="deactivate(${i})">Quitar</button>`;
+    c.appendChild(d);
+  });
+}
+
+function addPlayer(){
+  const inp=document.getElementById('new-name');
+  const name=inp.value.trim();
+  if(!name){toast('Ingresá un nombre','error');return;}
+  if(players.find(p=>p.toLowerCase()===name.toLowerCase())){toast('Ya existe','error');return;}
+  players.push(name);savePlayers();
+  inp.value='';
+  renderForm();renderMgmt();
+  toast('Jugador agregado','success');
+  // Send to Apps Script
+  if(scriptUrl){
+    fetch(scriptUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'addPlayer',name})}).catch(()=>{});
+  }
+}
+
+function deactivate(i){
+  if(confirm('¿Quitar a '+players[i]+'?')){
+    players.splice(i,1);savePlayers();renderForm();renderMgmt();toast('Jugador eliminado','success');
+  }
+}
+
+function savePlayers(){localStorage.setItem('club_players',JSON.stringify(players));}
+function saveCfg(){
+  scriptUrl=document.getElementById('cfg-url').value.trim();
+  localStorage.setItem('club_script_url',scriptUrl);
+  toast(scriptUrl?'Configuración guardada':'URL borrada','success');
+}
+
+// ======================== NOTIFICATIONS ========================
+function requestNotificationPermission(){
+  if('Notification' in window && Notification.permission==='default'){
+    // Will ask when user first saves
+  }
+}
+
+function sendNotification(title,body){
+  if(!('Notification' in window))return;
+  if(Notification.permission==='granted'){
+    new Notification(title,{body,icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%231a3a52"/><text x="50" y="68" font-size="50" text-anchor="middle" fill="white">⚽</text></svg>'});
+  }else if(Notification.permission==='default'){
+    Notification.requestPermission().then(p=>{
+      if(p==='granted')new Notification(title,{body});
+    });
+  }
+}
+
+// ======================== HELPERS ========================
+function norm(n){
+  if(!n)return'';
+  let s=n.trim().replace(/["'\u201C\u201D\u2018\u2019]/g,'').replace(/\s+/g,' ').toUpperCase();
+  if(ALIASES[s])return ALIASES[s];
+  for(const p of DEFAULT_PLAYERS){if(s===p.toUpperCase())return s;const pts=p.toUpperCase().split(' ');if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();}
+  return s;
+}
+
+function displayName(n){
+  for(const p of DEFAULT_PLAYERS){if(p.toUpperCase()===n)return p;}
+  for(const p of players){if(p.toUpperCase()===n)return p;}
+  return n.split(' ').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
+}
+
+function parseGvizDate(cell){
+  if(!cell||!cell.v)return null;
+  if(typeof cell.v==='string'&&cell.v.startsWith('Date(')){
+    const m=cell.v.match(/Date\((\d+),(\d+),(\d+)\)/);
+    if(m){const d=new Date(+m[1],+m[2],+m[3]);return d.toISOString().split('T')[0];}
+  }
+  if(cell.f){const p=cell.f.split('/');if(p.length===3)return`${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;}
+  return null;
+}
+
+function weekKey(ds){
+  const d=new Date(ds+'T12:00:00');const day=d.getDay();
+  const diff=d.getDate()-day+(day===0?-6:1);
+  const mon=new Date(d);mon.setDate(diff);return mon.toISOString().split('T')[0];
+}
+
+function formatDateShort(ds){const d=new Date(ds+'T12:00:00');return DIAS_C[d.getDay()]+' '+d.getDate().toString().padStart(2,'0');}
+function formatDateLong(ds){const d=new Date(ds+'T12:00:00');return DIAS_L[d.getDay()]+' '+d.getDate()+' '+MESES[d.getMonth()];}
+function formatWeek(wk){const d=new Date(wk+'T12:00:00');const e=new Date(d);e.setDate(e.getDate()+6);return`${d.getDate()} ${MESES[d.getMonth()].substring(0,3)} - ${e.getDate()} ${MESES[e.getMonth()].substring(0,3)}`;}
+function formatMonth(mk){const[y,m]=mk.split('-');return MESES[+m-1]+' '+y;}
+function pctColor(p){return p>=75?'var(--green)':p>=50?'var(--yellow)':'var(--red)';}
+
+function toast(msg,type){
+  const t=document.createElement('div');t.className='toast '+type;t.textContent=msg;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),2500);
+}
+
+// ======================== PWA / SERVICE WORKER ========================
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>

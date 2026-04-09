@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asistencias - Prácticas</title>
+<style>
+  :root {
+    --primary: #1a73e8;
+    --primary-light: #e8f0fe;
+    --green: #34a853;
+    --green-light: #e6f4ea;
+    --red: #ea4335;
+    --red-light: #fce8e6;
+    --yellow: #fbbc04;
+    --yellow-light: #fef7e0;
+    --gray: #5f6368;
+    --gray-light: #f1f3f4;
+    --border: #dadce0;
+    --bg: #ffffff;
+    --text: #202124;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--gray-light);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  .header {
+    background: var(--primary);
+    color: white;
+    padding: 16px 24px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header h1 {
+    font-size: 20px;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+
+  .header p {
+    font-size: 13px;
+    opacity: 0.85;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+
+  .tab-btn {
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    background: white;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--gray);
+    transition: all 0.2s;
+  }
+
+  .tab-btn:hover { border-color: var(--primary); color: var(--primary); }
+  .tab-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+  select {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 14px 18px;
+    font-weight: 600;
+    font-size: 15px;
+    border-bottom: 1px solid var(--gray-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .badge {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+  }
+
+  .badge-green { background: var(--green-light); color: var(--green); }
+  .badge-yellow { background: var(--yellow-light); color: #e37400; }
+  .badge-red { background: var(--red-light); color: var(--red); }
+
+  .player-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--gray-light);
+    gap: 12px;
+  }
+
+  .player-row:last-child { border-bottom: none; }
+
+  .player-name {
+    flex: 1;
+    font-size: 14px;
+    min-width: 160px;
+  }
+
+  .attendance-bar-container {
+    flex: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bar-bg {
+    flex: 1;
+    height: 8px;
+    background: var(--gray-light);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+  }
+
+  .pct { font-size: 13px; font-weight: 600; min-width: 42px; text-align: right; }
+  .count { font-size: 12px; color: var(--gray); min-width: 40px; text-align: center; }
+
+  .day-dots {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 600;
+    color: white;
+    cursor: default;
+    position: relative;
+  }
+
+  .dot.present { background: var(--green); }
+  .dot.absent { background: var(--red); }
+  .dot[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    z-index: 10;
+    margin-bottom: 4px;
+  }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    padding: 16px 18px;
+  }
+
+  .stat-box {
+    text-align: center;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--gray-light);
+  }
+
+  .stat-box .number { font-size: 28px; font-weight: 700; }
+  .stat-box .label { font-size: 12px; color: var(--gray); margin-top: 2px; }
+
+  .loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--gray);
+  }
+
+  .loading .spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--gray-light);
+    border-top: 3px solid var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--gray);
+    font-size: 14px;
+  }
+
+  .week-label {
+    font-size: 12px;
+    color: var(--gray);
+    padding: 2px 0;
+  }
+
+  .att-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .att-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--gray-light);
+    padding: 8px 6px;
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--gray);
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .att-table tbody tr {
+    border-bottom: 1px solid var(--gray-light);
+  }
+
+  .att-table tbody tr:hover {
+    background: var(--primary-light);
+  }
+
+  .att-name-col {
+    text-align: left;
+    padding: 8px 12px;
+    min-width: 160px;
+    font-size: 13px;
+  }
+
+  .att-day-col {
+    text-align: center;
+    padding: 6px 4px;
+    min-width: 50px;
+  }
+
+  .att-total-col {
+    text-align: center;
+    padding: 6px 8px;
+    font-weight: 500;
+    min-width: 50px;
+  }
+
+  .att-pct-col {
+    text-align: right;
+    padding: 6px 12px;
+    min-width: 45px;
+  }
+
+  .dot-inline {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: white;
+  }
+
+  .dot-inline.present { background: var(--green); }
+  .dot-inline.absent { background: var(--red); }
+
+  @media (max-width: 600px) {
+    .player-row { flex-wrap: wrap; padding: 8px 14px; }
+    .player-name { min-width: 100%; font-weight: 500; }
+    .attendance-bar-container { flex-basis: 100%; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .container { padding: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Control de Asistencias</h1>
+  <p>Prácticas - Datos en vivo desde Google Sheets</p>
+</div>
+
+<div class="container">
+  <div class="controls">
+    <button class="tab-btn active" onclick="setView('semanal')">Semanal</button>
+    <button class="tab-btn" onclick="setView('mensual')">Mensual</button>
+    <button class="tab-btn" onclick="setView('jugador')">Por Jugador</button>
+    <select id="periodSelect" onchange="render()"></select>
+    <select id="playerSelect" onchange="render()" style="display:none"></select>
+  </div>
+
+  <div id="content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Cargando datos...
+    </div>
+  </div>
+</div>
+
+<script>
+const SHEET_ID = '1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
+const GID = '341333262';
+
+let allData = [];
+let currentView = 'semanal';
+
+// All players from the form
+const ALL_PLAYERS = [
+  'Bernaus Agustin','Bernaus Federico','Carranza Matias','Del Valle Jonatan',
+  'Diaz Jonatan','Fossarelli Antonio','Gomez Gustavo','Gomez Juan Pablo',
+  'Lazaneo Juan Manuel','Landriel Federico','Lecuima Esteban','Lencina Nicolas',
+  'Lovera Ignacio','Mendoza Alexis','Ñañez Ruben','Nieto Fabio Armando',
+  'Paireti Franco','Pochettino Dante','Sanchez Hernan','Vijarra Nahuel','Villaruel Daniel'
+];
+
+async function fetchData() {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
+  try {
+    let text;
+    try {
+      const res = await fetch(url);
+      text = await res.text();
+    } catch (fetchErr) {
+      // Fallback: JSONP via script tag (works from file:// protocol)
+      text = await new Promise((resolve, reject) => {
+        const cbName = 'gvizCb_' + Date.now();
+        window.google = window.google || {};
+        window.google.visualization = window.google.visualization || {};
+        window.google.visualization.Query = window.google.visualization.Query || {};
+        window.google.visualization.Query.setResponse = function(data) {
+          resolve('google.visualization.Query.setResponse(' + JSON.stringify(data) + ');');
+        };
+        const script = document.createElement('script');
+        script.src = url + '&tqx=out:json;responseHandler:google.visualization.Query.setResponse';
+        script.onerror = reject;
+        document.head.appendChild(script);
+        setTimeout(() => reject(new Error('Timeout')), 10000);
+      });
+    }
+    const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/)[1]);
+
+    allData = [];
+    const rows = json.table.rows;
+
+    for (const row of rows) {
+      const cells = row.c;
+      if (!cells || !cells[1]) continue;
+
+      // Parse date from column B (Fecha entrenamiento)
+      let dateStr = '';
+      if (cells[1].v) {
+        if (typeof cells[1].v === 'string' && cells[1].v.startsWith('Date(')) {
+          const m = cells[1].v.match(/Date\((\d+),(\d+),(\d+)\)/);
+          if (m) {
+            const d = new Date(parseInt(m[1]), parseInt(m[2]), parseInt(m[3]));
+            dateStr = d.toISOString().split('T')[0];
+          }
+        } else if (cells[1].f) {
+          // Use formatted value like "16/03/2026"
+          const parts = cells[1].f.split('/');
+          if (parts.length === 3) {
+            dateStr = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+          }
+        }
+      }
+
+      // Parse players from column C
+      const playersRaw = cells[2] ? (cells[2].v || '') : '';
+      const presentPlayers = playersRaw.split(',').map(p => p.trim()).filter(p => p.length > 0);
+
+      // Normalize names for matching
+      const normalizedPresent = presentPlayers.map(n => normalizeName(n));
+
+      if (dateStr && presentPlayers.length > 0) {
+        allData.push({ date: dateStr, present: normalizedPresent });
+      }
+    }
+
+    // Merge multiple submissions for same date (take union of players)
+    const byDate = {};
+    for (const entry of allData) {
+      if (!byDate[entry.date]) byDate[entry.date] = new Set();
+      for (const p of entry.present) byDate[entry.date].add(p);
+    }
+
+    allData = Object.entries(byDate).map(([date, players]) => ({
+      date,
+      present: [...players]
+    })).sort((a, b) => a.date.localeCompare(b.date));
+
+    buildSelectors();
+    render();
+  } catch (e) {
+    document.getElementById('content').innerHTML = `
+      <div class="card"><div style="padding:30px;text-align:center;color:var(--red)">
+        Error al cargar datos. Verificá que la hoja esté compartida como "Cualquiera con el enlace".
+        <br><small style="color:var(--gray)">${e.message}</small>
+      </div></div>`;
+  }
+}
+
+function normalizeName(name) {
+  // Normalize: remove extra spaces, handle aliases
+  let n = name.trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+
+  // Remove quotes first
+  n = n.replace(/["'\u201C\u201D\u2018\u2019]/g, '').replace(/\s+/g, ' ').trim();
+
+  // Map common aliases/variations
+  const aliases = {
+    'DIAZ JONATAN CHANCLA': 'DIAZ JONATAN',
+    'LECUIMA ESTEBAN KUN': 'LECUIMA ESTEBAN',
+    'NIETO FABIO CATA': 'NIETO FABIO ARMANDO',
+    'NIETO FABIO ARMANDO CATA': 'NIETO FABIO ARMANDO',
+    'VILLARUEL DARIO CACO': 'VILLARUEL DANIEL',
+  };
+
+  if (aliases[n]) return aliases[n];
+
+  // Try partial match to known players
+  for (const p of ALL_PLAYERS) {
+    if (n === p.toUpperCase()) return p.toUpperCase();
+    // Check if last name + first name matches
+    const parts = p.toUpperCase().split(' ');
+    if (parts.length >= 2 && n.includes(parts[0]) && n.includes(parts[1])) return p.toUpperCase();
+  }
+
+  return n;
+}
+
+function getPlayerDisplayName(normalized) {
+  for (const p of ALL_PLAYERS) {
+    if (p.toUpperCase() === normalized) return p;
+  }
+  // Title case
+  return normalized.split(' ').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+}
+
+function getWeekKey(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday start
+  const monday = new Date(d);
+  monday.setDate(diff);
+  return monday.toISOString().split('T')[0];
+}
+
+function getMonthKey(dateStr) {
+  return dateStr.substring(0, 7); // "2026-03"
+}
+
+const DIAS_CORTO = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+const DIAS_LARGO = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
+}
+
+function formatDateLong(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return `${DIAS_LARGO[d.getDay()]} ${d.getDate()} ${MESES[d.getMonth()]}`;
+}
+
+function formatDateShort(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return `${DIAS_CORTO[d.getDay()]} ${d.getDate().toString().padStart(2,'0')}`;
+}
+
+function formatWeek(weekKey) {
+  const d = new Date(weekKey + 'T12:00:00');
+  const end = new Date(d);
+  end.setDate(end.getDate() + 6);
+  return `${d.toLocaleDateString('es-AR', {day:'numeric', month:'short'})} - ${end.toLocaleDateString('es-AR', {day:'numeric', month:'short'})}`;
+}
+
+function formatMonth(monthKey) {
+  const [y, m] = monthKey.split('-');
+  const months = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  return `${months[parseInt(m)]} ${y}`;
+}
+
+function buildSelectors() {
+  const periodSel = document.getElementById('periodSelect');
+  const playerSel = document.getElementById('playerSelect');
+
+  // Get all unique players across all data
+  const allUniquePlayers = new Set();
+  allData.forEach(d => d.present.forEach(p => allUniquePlayers.add(p)));
+
+  // Build player select
+  playerSel.innerHTML = '';
+  const sorted = [...allUniquePlayers].sort();
+  sorted.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = getPlayerDisplayName(p);
+    playerSel.appendChild(opt);
+  });
+
+  updatePeriodSelector();
+}
+
+function updatePeriodSelector() {
+  const periodSel = document.getElementById('periodSelect');
+  periodSel.innerHTML = '';
+
+  if (currentView === 'semanal' || currentView === 'jugador') {
+    const weeks = [...new Set(allData.map(d => getWeekKey(d.date)))].sort().reverse();
+    if (weeks.length === 0) return;
+
+    // Add "Todas" option
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = 'Todas las semanas';
+    periodSel.appendChild(allOpt);
+
+    weeks.forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = w;
+      opt.textContent = formatWeek(w);
+      periodSel.appendChild(opt);
+    });
+  } else {
+    const months = [...new Set(allData.map(d => getMonthKey(d.date)))].sort().reverse();
+    months.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = formatMonth(m);
+      periodSel.appendChild(opt);
+    });
+  }
+}
+
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  document.getElementById('playerSelect').style.display = view === 'jugador' ? '' : 'none';
+  updatePeriodSelector();
+  render();
+}
+
+function getColorForPct(pct) {
+  if (pct >= 75) return 'var(--green)';
+  if (pct >= 50) return 'var(--yellow)';
+  return 'var(--red)';
+}
+
+function getBadgeClass(pct) {
+  if (pct >= 75) return 'badge-green';
+  if (pct >= 50) return 'badge-yellow';
+  return 'badge-red';
+}
+
+function render() {
+  const content = document.getElementById('content');
+  const period = document.getElementById('periodSelect').value;
+
+  if (allData.length === 0) {
+    content.innerHTML = '<div class="empty-state">No hay datos disponibles.</div>';
+    return;
+  }
+
+  if (currentView === 'semanal') renderWeekly(content, period);
+  else if (currentView === 'mensual') renderMonthly(content, period);
+  else renderPlayer(content, period);
+}
+
+function renderWeekly(content, selectedWeek) {
+  let filteredData;
+
+  if (selectedWeek === 'all') {
+    filteredData = allData;
+  } else {
+    filteredData = allData.filter(d => getWeekKey(d.date) === selectedWeek);
+  }
+
+  if (filteredData.length === 0) {
+    content.innerHTML = '<div class="empty-state">No hay prácticas en esta semana.</div>';
+    return;
+  }
+
+  const totalPractices = filteredData.length;
+
+  // Count attendance per player
+  const playerAttendance = {};
+  const allPresentPlayers = new Set();
+
+  filteredData.forEach(d => {
+    d.present.forEach(p => {
+      allPresentPlayers.add(p);
+      if (!playerAttendance[p]) playerAttendance[p] = { count: 0, dates: [] };
+      playerAttendance[p].count++;
+      playerAttendance[p].dates.push(d.date);
+    });
+  });
+
+  // Include ALL_PLAYERS even if 0 attendance
+  ALL_PLAYERS.forEach(p => {
+    const key = p.toUpperCase();
+    if (!playerAttendance[key]) {
+      playerAttendance[key] = { count: 0, dates: [] };
+    }
+  });
+
+  // Sort by attendance descending
+  const sorted = Object.entries(playerAttendance)
+    .sort((a, b) => b[1].count - a[1].count);
+
+  const avgPct = sorted.length > 0
+    ? Math.round(sorted.reduce((s, [, v]) => s + (v.count / totalPractices * 100), 0) / sorted.length)
+    : 0;
+
+  let html = `
+    <div class="card">
+      <div class="card-header">
+        ${selectedWeek === 'all' ? 'Resumen General' : 'Semana ' + formatWeek(selectedWeek)}
+        <span class="badge ${getBadgeClass(avgPct)}">${avgPct}% promedio</span>
+      </div>
+      <div class="summary-grid">
+        <div class="stat-box">
+          <div class="number">${totalPractices}</div>
+          <div class="label">Prácticas</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">${sorted.length}</div>
+          <div class="label">Jugadores</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">${avgPct}%</div>
+          <div class="label">Asistencia Prom.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <div class="card-header">Detalle por Jugador</div>
+      <table class="att-table">
+        <thead><tr>
+          <th class="att-name-col">Jugador</th>`;
+
+  filteredData.forEach(d => {
+    html += `<th class="att-day-col">${formatDateShort(d.date)}</th>`;
+  });
+
+  html += `<th class="att-total-col">Total</th><th class="att-pct-col">%</th></tr></thead><tbody>`;
+
+  for (const [player, data] of sorted) {
+    const pct = Math.round(data.count / totalPractices * 100);
+    const color = getColorForPct(pct);
+
+    html += `<tr><td class="att-name-col">${getPlayerDisplayName(player)}</td>`;
+
+    filteredData.forEach(d => {
+      const isPresent = d.present.includes(player);
+      html += `<td class="att-day-col"><span class="dot-inline ${isPresent ? 'present' : 'absent'}">${isPresent ? '✓' : '✗'}</span></td>`;
+    });
+
+    html += `<td class="att-total-col">${data.count}/${totalPractices}</td>`;
+    html += `<td class="att-pct-col" style="color:${color};font-weight:600">${pct}%</td>`;
+    html += `</tr>`;
+  }
+
+  html += '</tbody></table></div>';
+  content.innerHTML = html;
+}
+
+function renderMonthly(content, selectedMonth) {
+  const filteredData = allData.filter(d => getMonthKey(d.date) === selectedMonth);
+
+  if (filteredData.length === 0) {
+    content.innerHTML = '<div class="empty-state">No hay prácticas en este mes.</div>';
+    return;
+  }
+
+  // Group by week within the month
+  const weekGroups = {};
+  filteredData.forEach(d => {
+    const wk = getWeekKey(d.date);
+    if (!weekGroups[wk]) weekGroups[wk] = [];
+    weekGroups[wk].push(d);
+  });
+
+  const totalPractices = filteredData.length;
+  const weeks = Object.keys(weekGroups).sort();
+
+  // Overall attendance
+  const playerTotals = {};
+  ALL_PLAYERS.forEach(p => { playerTotals[p.toUpperCase()] = 0; });
+  filteredData.forEach(d => {
+    d.present.forEach(p => {
+      if (playerTotals[p] !== undefined) playerTotals[p]++;
+      else playerTotals[p] = 1;
+    });
+  });
+
+  const sorted = Object.entries(playerTotals).sort((a, b) => b[1] - a[1]);
+  const avgPct = Math.round(sorted.reduce((s, [, c]) => s + (c / totalPractices * 100), 0) / sorted.length);
+
+  let html = `
+    <div class="card">
+      <div class="card-header">
+        ${formatMonth(selectedMonth)}
+        <span class="badge ${getBadgeClass(avgPct)}">${avgPct}% promedio</span>
+      </div>
+      <div class="summary-grid">
+        <div class="stat-box">
+          <div class="number">${totalPractices}</div>
+          <div class="label">Prácticas del mes</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">${weeks.length}</div>
+          <div class="label">Semanas</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">${avgPct}%</div>
+          <div class="label">Asistencia Prom.</div>
+        </div>
+      </div>
+    </div>`;
+
+  // Weekly breakdown cards
+  weeks.forEach((wk, idx) => {
+    const wkData = weekGroups[wk];
+    const wkTotal = wkData.length;
+    const wkAttendance = {};
+    ALL_PLAYERS.forEach(p => { wkAttendance[p.toUpperCase()] = 0; });
+    wkData.forEach(d => d.present.forEach(p => {
+      if (wkAttendance[p] !== undefined) wkAttendance[p]++;
+      else wkAttendance[p] = 1;
+    }));
+
+    const wkSorted = Object.entries(wkAttendance).sort((a, b) => b[1] - a[1]);
+    const wkAvg = Math.round(wkSorted.reduce((s, [, c]) => s + (c / wkTotal * 100), 0) / wkSorted.length);
+
+    html += `
+    <div class="card">
+      <div class="card-header">
+        Semana ${idx + 1}: ${formatWeek(wk)}
+        <span class="badge ${getBadgeClass(wkAvg)}">${wkAvg}% · ${wkTotal} prácticas</span>
+      </div>`;
+
+    for (const [player, count] of wkSorted) {
+      const pct = Math.round(count / wkTotal * 100);
+      const color = getColorForPct(pct);
+      html += `
+      <div class="player-row">
+        <div class="player-name">${getPlayerDisplayName(player)}</div>
+        <div class="attendance-bar-container">
+          <div class="count">${count}/${wkTotal}</div>
+          <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+          <div class="pct" style="color:${color}">${pct}%</div>
+        </div>
+      </div>`;
+    }
+
+    html += '</div>';
+  });
+
+  // Monthly totals table
+  html += `
+    <div class="card">
+      <div class="card-header">Total del Mes</div>`;
+
+  for (const [player, count] of sorted) {
+    const pct = Math.round(count / totalPractices * 100);
+    const color = getColorForPct(pct);
+    html += `
+      <div class="player-row">
+        <div class="player-name">${getPlayerDisplayName(player)}</div>
+        <div class="attendance-bar-container">
+          <div class="count">${count}/${totalPractices}</div>
+          <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+          <div class="pct" style="color:${color}">${pct}%</div>
+        </div>
+      </div>`;
+  }
+
+  html += '</div>';
+  content.innerHTML = html;
+}
+
+function renderPlayer(content, selectedWeek) {
+  const playerKey = document.getElementById('playerSelect').value;
+  if (!playerKey) {
+    content.innerHTML = '<div class="empty-state">Seleccioná un jugador.</div>';
+    return;
+  }
+
+  let filteredData;
+  if (selectedWeek === 'all') {
+    filteredData = allData;
+  } else {
+    filteredData = allData.filter(d => getWeekKey(d.date) === selectedWeek);
+  }
+
+  const totalPractices = filteredData.length;
+  let attended = 0;
+  const details = [];
+
+  filteredData.forEach(d => {
+    const was = d.present.includes(playerKey);
+    if (was) attended++;
+    details.push({ date: d.date, present: was });
+  });
+
+  const pct = totalPractices > 0 ? Math.round(attended / totalPractices * 100) : 0;
+
+  let html = `
+    <div class="card">
+      <div class="card-header">
+        ${getPlayerDisplayName(playerKey)}
+        <span class="badge ${getBadgeClass(pct)}">${pct}%</span>
+      </div>
+      <div class="summary-grid">
+        <div class="stat-box">
+          <div class="number" style="color:var(--green)">${attended}</div>
+          <div class="label">Asistencias</div>
+        </div>
+        <div class="stat-box">
+          <div class="number" style="color:var(--red)">${totalPractices - attended}</div>
+          <div class="label">Ausencias</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">${totalPractices}</div>
+          <div class="label">Total Prácticas</div>
+        </div>
+        <div class="stat-box">
+          <div class="number" style="color:${getColorForPct(pct)}">${pct}%</div>
+          <div class="label">Asistencia</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">Historial</div>`;
+
+  details.forEach(d => {
+    html += `
+      <div class="player-row">
+        <div class="player-name">${formatDateLong(d.date)}</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="dot ${d.present ? 'present' : 'absent'}">${d.present ? '✓' : '✗'}</div>
+          <span style="font-size:13px;color:${d.present ? 'var(--green)' : 'var(--red)'}">
+            ${d.present ? 'Presente' : 'Ausente'}
+          </span>
+        </div>
+      </div>`;
+  });
+
+  html += '</div>';
+  content.innerHTML = html;
+}
+
+// Init
+fetchData();
+</script>
+</body>
+</html>
