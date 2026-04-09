@@ -138,6 +138,13 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
   <!-- ===== FORM ===== -->
   <div id="scr-form" class="screen active">
     <input type="date" id="att-date" class="date-input">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:#fff;border-radius:8px;padding:10px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+      <span style="font-size:.75rem;color:#6b7280;font-weight:600;width:100%;margin-bottom:2px">Referencias:</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#10b981">P</span> Presente</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#3b82f6">E/A</span> Entrena Afuera</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#f59e0b">J</span> Justificado</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#ef4444">A</span> Ausente</span>
+    </div>
     <div id="att-list"></div>
     <button class="btn btn-primary" id="btn-save" onclick="saveAttendance()">Guardar Asistencia</button>
   </div>
