@@ -679,13 +679,24 @@ function norm(n){
   if(!n)return'';
   let s=n.trim().replace(/["'\u201C\u201D\u2018\u2019]/g,'').replace(/\s+/g,' ').toUpperCase();
   if(ALIASES[s])return ALIASES[s];
-  for(const p of DEFAULT_PLAYERS){if(s===p.toUpperCase())return s;const pts=p.toUpperCase().split(' ');if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();}
+  // Check against dynamic players list first (from Jugadores sheet)
+  for(const p of players){
+    if(s===p.toUpperCase())return p.toUpperCase();
+    const pts=p.toUpperCase().split(' ');
+    if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();
+  }
+  // Fallback: check against DEFAULT_PLAYERS
+  for(const p of DEFAULT_PLAYERS){
+    if(s===p.toUpperCase())return s;
+    const pts=p.toUpperCase().split(' ');
+    if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();
+  }
   return s;
 }
 
 function displayName(n){
-  for(const p of DEFAULT_PLAYERS){if(p.toUpperCase()===n)return p;}
   for(const p of players){if(p.toUpperCase()===n)return p;}
+  for(const p of DEFAULT_PLAYERS){if(p.toUpperCase()===n)return p;}
   return n.split(' ').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
 }
 

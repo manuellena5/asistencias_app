@@ -155,11 +155,11 @@ function addNewPlayer(name) {
       sheet.appendRow(['Nombre', 'Fecha_Agregado', 'Activo']);
     }
 
-    // Check if player already exists
+    // Check if player already exists (column A)
     const range = sheet.getDataRange();
     const values = range.getValues();
     for (let i = 1; i < values.length; i++) {
-      if (values[i][0] === name) {
+      if ((values[i][0] || '').toString().trim().toLowerCase() === name.toLowerCase()) {
         return {
           status: 'warning',
           message: 'Player already exists'
@@ -167,9 +167,8 @@ function addNewPlayer(name) {
       }
     }
 
-    // Add new player
-    const now = new Date();
-    sheet.appendRow([name, now.toISOString(), 'TRUE']);
+    // Add new player — only write the name in column A
+    sheet.appendRow([name]);
 
     return {
       status: 'success',
@@ -247,13 +246,11 @@ function getPlayersData() {
     const values = range.getValues();
     const players = [];
 
-    // Skip header row
+    // Skip header row — only read column A (Nombre), ignore other columns
     for (let i = 1; i < values.length; i++) {
-      if (values[i][2] === 'TRUE' || values[i][2] === true) { // Activo column
-        players.push({
-          nombre: values[i][0],
-          fechaAgregado: values[i][1]
-        });
+      const nombre = (values[i][0] || '').toString().trim();
+      if (nombre) {
+        players.push({ nombre: nombre });
       }
     }
 
@@ -393,26 +390,12 @@ function initializeSheets() {
       attendanceSheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación']);
     }
 
-    // Create Jugadores sheet
-    let playersSheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
+    // Jugadores sheet — already exists with custom columns, don't recreate it
+    const playersSheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
     if (!playersSheet) {
-      playersSheet = spreadsheet.insertSheet(PLAYERS_SHEET_NAME);
-      playersSheet.appendRow(['Nombre', 'Fecha_Agregado', 'Activo']);
-
-      // Add default players
-      const defaultPlayers = [
-        'Bernaus Agustin', 'Bernaus Federico', 'Carranza Matias', 'Del Valle Jonatan',
-        'Diaz Jonatan', 'Fossarelli Antonio', 'Gomez Gustavo', 'Gomez Juan Pablo',
-        'Lazaneo Juan Manuel', 'Landriel Federico', 'Lecuima Esteban', 'Lencina Nicolas',
-        'Lovera Ignacio', 'Mendoza Alexis', 'Ñañez Ruben', 'Nieto Fabio Armando',
-        'Paireti Franco', 'Pochettino Dante', 'Sanchez Hernan', 'Vijarra Nahuel',
-        'Villaruel Daniel'
-      ];
-
-      const now = new Date();
-      defaultPlayers.forEach(name => {
-        playersSheet.appendRow([name, now.toISOString(), 'TRUE']);
-      });
+      // Only create if truly missing (no existing data to preserve)
+      const newSheet = spreadsheet.insertSheet(PLAYERS_SHEET_NAME);
+      newSheet.appendRow(['Nombre']);
     }
 
     Logger.log('Sheets initialized successfully');
