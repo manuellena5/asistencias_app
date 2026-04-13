@@ -158,6 +158,10 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
       <div class="ico-big">📅</div>
       <p>Seleccioná una fecha<br>para cargar la asistencia</p>
     </div>
+    <div id="form-checking" style="display:none;align-items:center;gap:10px;padding:14px;background:#fff;border-radius:var(--radius);margin-bottom:10px;box-shadow:var(--shadow)">
+      <div style="width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
+      <span class="check-msg" style="font-size:.9rem;color:var(--gray);font-weight:500"></span>
+    </div>
     <div id="btn-load-wrap" style="display:none">
       <button class="btn btn-primary" id="btn-load" onclick="loadDateData(document.getElementById('att-date').value)">Cargar Asistencia</button>
     </div>
@@ -230,9 +234,10 @@ const ALIASES={
 let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
 let scriptUrl=localStorage.getItem('club_script_url')||'';
 let reportView='semanal';
-let allDays=[]; // [{date:'2026-03-16', players:{NOMBRE:status}}]
-let allObs={}; // {date:{NOMBRE:'obs text'}} — only for J status
-let loadedDates=new Set(); // dates that have attendance data in Sheets
+let allDays=[];
+let allObs={};
+let loadedDates=new Set();
+let cachedDateData={}; // {fecha: records[]} — cache de fetch por fecha
 
 // ======================== INIT ========================
 document.addEventListener('DOMContentLoaded',async()=>{
@@ -268,7 +273,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   }
 
   renderMgmt();
-  fetchLoadedDates();
+  fetchLoadedDates(); // en background, solo para los chips
   // Mostrar placeholder inicial
   document.getElementById('form-placeholder').style.display='block';
   document.getElementById('btn-load-wrap').style.display='none';
@@ -289,21 +294,58 @@ function go(screen,btn){
 }
 
 // ======================== FORM ========================
-function onDateChange(fecha){
-  // Ocultar lista y mostrar botón cargar
-  document.getElementById('form-placeholder').style.display='none';
+async function onDateChange(fecha){
   document.getElementById('form-body').style.display='none';
   document.getElementById('date-banner').className='date-banner';
-  if(fecha){
-    const lbl=loadedDates.has(fecha)
-      ? '⚠️ Ya hay datos para '+formatDateLong(fecha)+' — Cargar'
-      : '📋 Cargar asistencia del '+formatDateLong(fecha);
-    document.getElementById('btn-load').textContent=lbl;
-    document.getElementById('btn-load-wrap').style.display='block';
-  } else {
-    document.getElementById('btn-load-wrap').style.display='none';
+  document.getElementById('btn-load-wrap').style.display='none';
+  document.getElementById('form-placeholder').style.display='none';
+
+  if(!fecha){
     document.getElementById('form-placeholder').style.display='block';
+    return;
   }
+
+  // Mostrar estado "verificando"
+  const checkDiv=document.getElementById('form-checking');
+  checkDiv.style.display='flex';
+  checkDiv.querySelector('.check-msg').textContent='Verificando '+formatDateLong(fecha)+'...';
+
+  // Si ya está cacheado, usar cache
+  let records=null;
+  if(cachedDateData.hasOwnProperty(fecha)){
+    records=cachedDateData[fecha];
+  } else {
+    // Fetch solo esta fecha
+    if(scriptUrl){
+      try{
+        const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
+        const j=await r.json();
+        records=(j.status==='success'&&j.data)?j.data:[];
+      }catch(e){
+        // fallback localStorage
+        const stored=localStorage.getItem('att_'+fecha);
+        records=stored?JSON.parse(stored)||[];
+      }
+    } else {
+      const stored=localStorage.getItem('att_'+fecha);
+      records=stored?JSON.parse(stored)||[];
+    }
+    cachedDateData[fecha]=records;
+  }
+
+  checkDiv.style.display='none';
+
+  const hasData=records&&records.length>0;
+  const btn=document.getElementById('btn-load');
+  if(hasData){
+    btn.textContent='⚠️ '+formatDateLong(fecha)+' ya tiene datos — Cargar';
+    btn.className='btn btn-primary';
+  } else {
+    btn.textContent='📋 Cargar asistencia del '+formatDateLong(fecha);
+    btn.className='btn btn-primary';
+  }
+  btn.disabled=false;
+  document.getElementById('btn-load-wrap').style.display='block';
 }
 
 function resetForm(){
@@ -313,51 +355,22 @@ function resetForm(){
   onDateChange(fecha);
 }
 
-function showFormBody(){
-  document.getElementById('form-placeholder').style.display='none';
-  document.getElementById('btn-load-wrap').style.display='none';
-  document.getElementById('form-body').style.display='block';
-}
-
-async function loadDateData(fecha){
+function loadDateData(fecha){
   if(!fecha)return;
-  const btnLoad=document.getElementById('btn-load');
-  btnLoad.disabled=true;
-  btnLoad.textContent='Cargando...';
-  document.getElementById('form-body').style.display='block';
   document.getElementById('form-placeholder').style.display='none';
   document.getElementById('btn-load-wrap').style.display='none';
+  document.getElementById('form-checking').style.display='none';
   renderForm();
-  // 1) Apps Script (fuente de verdad)
-  if(scriptUrl){
-    try{
-      const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
-      const j=await r.json();
-      if(j.status==='success'&&j.data&&j.data.length>0){
-        applyFormData(j.data);
-        updateDateBanner(fecha,'loaded');
-        btnLoad.disabled=false;
-        return;
-      }
-    }catch(e){}
+  document.getElementById('form-body').style.display='block';
+
+  const records=cachedDateData[fecha]||[];
+  if(records.length>0){
+    applyFormData(records);
+    updateDateBanner(fecha,'loaded');
+  } else {
+    players.forEach((_,i)=>setStatus(i,'P'));
+    updateDateBanner(fecha,'new');
   }
-  // 2) Fallback localStorage
-  const stored=localStorage.getItem('att_'+fecha);
-  if(stored){
-    try{
-      const recs=JSON.parse(stored);
-      if(recs&&recs.length>0){
-        applyFormData(recs);
-        updateDateBanner(fecha,'loaded');
-        btnLoad.disabled=false;
-        return;
-      }
-    }catch(e){}
-  }
-  // Sin datos: todos P
-  players.forEach((_,i)=>setStatus(i,'P'));
-  updateDateBanner(fecha,'new');
-  btnLoad.disabled=false;
 }
 
 function updateDateBanner(fecha, state){
@@ -403,7 +416,12 @@ function renderDatesStrip(){
     chip.title=formatDateLong(d);
     chip.onclick=()=>{
       document.getElementById('att-date').value=d;
-      loadDateData(d);
+      // Si ya tenemos cache, cargar directo; sino pasar por onDateChange
+      if(cachedDateData.hasOwnProperty(d)){
+        loadDateData(d);
+      } else {
+        onDateChange(d).then(()=>loadDateData(d));
+      }
     };
     chips.appendChild(chip);
   });
