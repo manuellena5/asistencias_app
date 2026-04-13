@@ -199,11 +199,34 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
       <button class="btn btn-primary" onclick="addPlayer()">+</button>
     </div>
     <div id="mgmt-list"></div>
-    <div class="config-box">
-      <label>URL de Google Apps Script</label>
-      <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/...">
-      <p class="hint">Pegá la URL del Web App desplegado</p>
-      <button class="btn-sm btn-sec" style="margin-top:8px;width:100%" onclick="saveCfg()">Guardar Config</button>
+  </div>
+
+  <!-- ===== CONFIG ===== -->
+  <div id="scr-config" class="screen">
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-hdr">⚙️ Apps Script</div>
+      <div style="padding:14px">
+        <label style="display:block;font-weight:600;font-size:.85rem;margin-bottom:6px">URL del Web App</label>
+        <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/..." style="width:100%;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:.85rem;margin-bottom:8px;font-family:inherit">
+        <p style="font-size:.75rem;color:var(--gray);margin-bottom:10px">Pegá la URL del Web App desplegado en Google Apps Script.</p>
+        <button class="btn btn-primary" onclick="saveCfg()">Guardar URL</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hdr">📋 Estado por defecto en Asistencia</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">Estado inicial de cada jugador cuando se carga un día sin datos.</p>
+        <div style="display:flex;gap:10px">
+          <label style="flex:1;display:flex;align-items:center;gap:8px;padding:12px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer" id="lbl-default-A">
+            <input type="radio" name="default-status" value="A" onchange="saveDefaultStatus(this.value)" style="width:18px;height:18px;accent-color:var(--red)">
+            <span style="font-weight:600;color:var(--red-text)">A — Ausente</span>
+          </label>
+          <label style="flex:1;display:flex;align-items:center;gap:8px;padding:12px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer" id="lbl-default-P">
+            <input type="radio" name="default-status" value="P" onchange="saveDefaultStatus(this.value)" style="width:18px;height:18px;accent-color:var(--green)">
+            <span style="font-weight:600;color:var(--green-text)">P — Presente</span>
+          </label>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -212,6 +235,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
   <button class="active" onclick="go('form',this)"><span class="ico">📋</span>Asistencia</button>
   <button onclick="go('reports',this)"><span class="ico">📊</span>Reportes</button>
   <button onclick="go('players',this)"><span class="ico">👥</span>Jugadores</button>
+  <button onclick="go('config',this)"><span class="ico">⚙️</span>Config</button>
 </div>
 
 <script>
@@ -233,6 +257,7 @@ const ALIASES={
 // ======================== STATE ========================
 let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
 let scriptUrl=localStorage.getItem('club_script_url')||'';
+let defaultStatus=localStorage.getItem('club_default_status')||'A';
 let reportView='semanal';
 let allDays=[];
 let allObs={};
@@ -243,6 +268,11 @@ let cachedDateData={}; // {fecha: records[]} — cache de fetch por fecha
 document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('att-date').value=new Date().toISOString().split('T')[0];
   document.getElementById('cfg-url').value=scriptUrl;
+  // Aplicar estado por defecto guardado en el radio
+  document.querySelectorAll('input[name="default-status"]').forEach(r=>{
+    r.checked=(r.value===defaultStatus);
+  });
+  highlightDefaultLabel();
 
   if(scriptUrl){
     // Mostrar loading mientras se cargan los jugadores desde Sheets
@@ -286,8 +316,8 @@ function go(screen,btn){
   document.getElementById('scr-'+screen).classList.add('active');
   document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  const titles={form:'Asistencias',reports:'Reportes',players:'Jugadores'};
-  const subs={form:'Registrar asistencia',reports:'Ver estadísticas',players:'Gestionar plantel'};
+  const titles={form:'Asistencias',reports:'Reportes',players:'Jugadores',config:'Configuración'};
+  const subs={form:'Registrar asistencia',reports:'Ver estadísticas',players:'Gestionar plantel',config:'Ajustes de la app'};
   document.getElementById('hdr-title').textContent=titles[screen];
   document.getElementById('hdr-sub').textContent=subs[screen];
   if(screen==='reports')loadReports();
@@ -368,7 +398,7 @@ function loadDateData(fecha){
     applyFormData(records);
     updateDateBanner(fecha,'loaded');
   } else {
-    players.forEach((_,i)=>setStatus(i,'P'));
+    players.forEach((_,i)=>setStatus(i,defaultStatus));
     updateDateBanner(fecha,'new');
   }
 }
@@ -522,10 +552,6 @@ async function saveAttendance(){
       });
     }
 
-    toast('Asistencia guardada','success');
-    sendNotification('Asistencia guardada',`Se registró la asistencia del ${formatDateLong(data.fecha)}`);
-
-    // Keep form loaded with saved data (don't reset)
     toast('✓ Guardado — podés seguir editando','success');
   }catch(e){
     toast('Error: '+e.message,'error');
@@ -801,24 +827,34 @@ function savePlayers(){localStorage.setItem('club_players',JSON.stringify(player
 function saveCfg(){
   scriptUrl=document.getElementById('cfg-url').value.trim();
   localStorage.setItem('club_script_url',scriptUrl);
-  toast(scriptUrl?'Configuración guardada':'URL borrada','success');
+  toast(scriptUrl?'URL guardada':'URL borrada','success');
+}
+function saveDefaultStatus(val){
+  defaultStatus=val;
+  localStorage.setItem('club_default_status',val);
+  highlightDefaultLabel();
+  toast('Estado por defecto: '+val,'success');
+}
+function highlightDefaultLabel(){
+  ['A','P'].forEach(v=>{
+    const lbl=document.getElementById('lbl-default-'+v);
+    if(lbl) lbl.style.borderColor=(v===defaultStatus)?(v==='A'?'var(--red)':'var(--green)'):'var(--border)';
+  });
 }
 
 // ======================== NOTIFICATIONS ========================
 function requestNotificationPermission(){
   if('Notification' in window && Notification.permission==='default'){
-    // Will ask when user first saves
+    Notification.requestPermission();
   }
 }
 
 function sendNotification(title,body){
-  if(!('Notification' in window))return;
-  if(Notification.permission==='granted'){
-    new Notification(title,{body,icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%231a3a52"/><text x="50" y="68" font-size="50" text-anchor="middle" fill="white">⚽</text></svg>'});
-  }else if(Notification.permission==='default'){
-    Notification.requestPermission().then(p=>{
-      if(p==='granted')new Notification(title,{body});
-    });
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.ready.then(reg=>{
+      reg.showNotification(title,{body,icon:'./icon.svg'});
+    }).catch(()=>{});
   }
 }
 
