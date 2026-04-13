@@ -186,18 +186,10 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 <script>
 // ======================== CONFIG ========================
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
-const OLD_GID='341333262';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 const DIAS_L=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-const DEFAULT_PLAYERS=[
-  'Bernaus Agustin','Bernaus Federico','Carranza Matias','Del Valle Jonatan',
-  'Diaz Jonatan','Fossarelli Antonio','Gomez Gustavo','Gomez Juan Pablo',
-  'Lazaneo Juan Manuel','Landriel Federico','Lecuima Esteban','Lencina Nicolas',
-  'Lovera Ignacio','Mendoza Alexis','Ñañez Ruben','Nieto Fabio Armando',
-  'Paireti Franco','Pochettino Dante','Sanchez Hernan','Vijarra Nahuel','Villaruel Daniel'
-];
 
 const ALIASES={
   'DIAZ JONATAN CHANCLA':'DIAZ JONATAN',
@@ -208,7 +200,7 @@ const ALIASES={
 };
 
 // ======================== STATE ========================
-let players=JSON.parse(localStorage.getItem('club_players')||'null')||[...DEFAULT_PLAYERS];
+let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
 let scriptUrl=localStorage.getItem('club_script_url')||'';
 let reportView='semanal';
 let allDays=[]; // [{date:'2026-03-16', players:{NOMBRE:status}}]
@@ -218,19 +210,33 @@ let allObs={}; // {date:{NOMBRE:'obs text'}} — only for J status
 document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('att-date').value=new Date().toISOString().split('T')[0];
   document.getElementById('cfg-url').value=scriptUrl;
-  // Sync player list from Apps Script (background, non-blocking UI)
+
   if(scriptUrl){
+    // Mostrar loading mientras se cargan los jugadores desde Sheets
+    document.getElementById('att-list').innerHTML='<div class="loading"><div class="sp"></div>Cargando jugadores desde Sheets...</div>';
+    document.getElementById('mgmt-list').innerHTML='<div class="loading"><div class="sp"></div><span>Cargando...</span></div>';
     try{
       const r=await fetch(scriptUrl+'?action=getPlayers');
       const j=await r.json();
       if(j.status==='success'&&j.players&&j.players.length>0){
-        const remote=j.players.map(p=>p.nombre);
-        const merged=[...new Set([...DEFAULT_PLAYERS,...remote,...players])];
-        players=merged;
+        // Sheets es la fuente de verdad: reemplazar lista local
+        players=j.players.map(p=>p.nombre);
         savePlayers();
+      } else if(!players.length){
+        toast('La hoja Jugadores está vacía','error');
       }
-    }catch(e){}
+    }catch(e){
+      if(!players.length){
+        toast('Sin conexión — no se pudo cargar la lista de jugadores','error');
+      } else {
+        toast('Usando lista en caché (sin conexión)','error');
+      }
+    }
+  } else if(!players.length){
+    // Sin URL configurada y sin caché: avisar al usuario
+    toast('Configurá la URL del Apps Script para cargar los jugadores','error');
   }
+
   renderForm();
   renderMgmt();
   requestNotificationPermission();
@@ -392,82 +398,30 @@ async function loadReports(){
   const out=document.getElementById('report-out');
   out.innerHTML='<div class="loading"><div class="sp"></div>Cargando datos...</div>';
   allDays=[];
+  allObs={};
+
+  if(!scriptUrl){
+    out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">Configurá la URL del Apps Script para ver los reportes.</div>';
+    return;
+  }
 
   try{
-    // 1) Fetch old form data via gviz
-    const url=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${OLD_GID}`;
-    let text;
-    try{
-      const r=await fetch(url);text=await r.text();
-    }catch(e){text=null;}
-
-    if(text){
-      const m=text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/);
-      if(m){
-        const json=JSON.parse(m[1]);
-        const rows=json.table.rows||[];
-        const byDate={};
-        for(const row of rows){
-          const cells=row.c;if(!cells||!cells[1])continue;
-          let ds=parseGvizDate(cells[1]);
-          if(!ds)continue;
-          const raw=cells[2]?(cells[2].v||''):'';
-          const names=raw.split(',').map(n=>norm(n)).filter(n=>n);
-          if(!byDate[ds])byDate[ds]={};
-          names.forEach(n=>{byDate[ds][n]='P';});
+    const r=await fetch(scriptUrl+'?action=getAllAttendance');
+    const j=await r.json();
+    if(j.status==='success'&&j.data){
+      const byDate={};
+      j.data.forEach(rec=>{
+        if(!rec.fecha)return;
+        if(!byDate[rec.fecha])byDate[rec.fecha]={};
+        byDate[rec.fecha][norm(rec.jugador)]=rec.estado;
+        if(rec.estado==='J'&&rec.observacion){
+          if(!allObs[rec.fecha])allObs[rec.fecha]={};
+          allObs[rec.fecha][norm(rec.jugador)]=rec.observacion;
         }
-        for(const[date,pmap]of Object.entries(byDate)){
-          allDays.push({date,players:pmap});
-        }
+      });
+      for(const[date,pmap]of Object.entries(byDate)){
+        allDays.push({date,players:pmap});
       }
-    }
-
-    // 2) Load from localStorage (new app data)
-    for(let i=0;i<365;i++){
-      const d=new Date();d.setDate(d.getDate()-i);
-      const ds=d.toISOString().split('T')[0];
-      const stored=localStorage.getItem('att_'+ds);
-      if(stored){
-        try{
-          const recs=JSON.parse(stored);
-          const pmap={};
-          recs.forEach(r=>{
-            pmap[norm(r.jugador)]=r.estado;
-            if(r.estado==='J'&&r.observacion){
-              if(!allObs[ds])allObs[ds]={};
-              allObs[ds][norm(r.jugador)]=r.observacion;
-            }
-          });
-          // Merge or replace: app data overrides old form data
-          const existing=allDays.find(x=>x.date===ds);
-          if(existing){Object.assign(existing.players,pmap);}
-          else{allDays.push({date:ds,players:pmap});}
-        }catch(e){}
-      }
-    }
-
-    // 3) Also try to load from Apps Script new sheet
-    if(scriptUrl){
-      try{
-        const r=await fetch(scriptUrl+'?action=getAllAttendance');
-        const j=await r.json();
-        if(j.status==='success'&&j.data){
-          const byDate={};
-          j.data.forEach(rec=>{
-            if(!byDate[rec.fecha])byDate[rec.fecha]={};
-            byDate[rec.fecha][norm(rec.jugador)]=rec.estado;
-            if(rec.estado==='J'&&rec.observacion){
-              if(!allObs[rec.fecha])allObs[rec.fecha]={};
-              allObs[rec.fecha][norm(rec.jugador)]=rec.observacion;
-            }
-          });
-          for(const[date,pmap]of Object.entries(byDate)){
-            const existing=allDays.find(x=>x.date===date);
-            if(existing){Object.assign(existing.players,pmap);}
-            else{allDays.push({date,players:pmap});}
-          }
-        }
-      }catch(e){}
     }
 
     allDays.sort((a,b)=>a.date.localeCompare(b.date));
@@ -657,34 +611,41 @@ function renderPlayer(){
 function renderMgmt(){
   const c=document.getElementById('mgmt-list');
   c.innerHTML='';
-  players.forEach((p,i)=>{
+  players.forEach(p=>{
     const d=document.createElement('div');d.className='mgmt-item';
-    d.innerHTML=`<span>${p}</span><button class="btn-sm btn-warn" onclick="deactivate(${i})">Quitar</button>`;
+    d.innerHTML=`<span>${p}</span><span class="act">Activo</span>`;
     c.appendChild(d);
   });
 }
 
-function addPlayer(){
+async function addPlayer(){
   const inp=document.getElementById('new-name');
   const name=inp.value.trim();
   if(!name){toast('Ingresá un nombre','error');return;}
   if(players.find(p=>p.toLowerCase()===name.toLowerCase())){toast('Ya existe','error');return;}
-  players.push(name);savePlayers();
-  inp.value='';
-  renderForm();renderMgmt();
-  toast('Jugador agregado','success');
-  // Send to Apps Script
-  if(scriptUrl){
-    fetch(scriptUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'addPlayer',name})}).catch(()=>{});
+  if(!scriptUrl){toast('Configurá la URL del Apps Script primero','error');return;}
+
+  const btn=document.querySelector('.add-row button');
+  btn.disabled=true;btn.textContent='...';
+  try{
+    // Intentar agregar en Sheets primero
+    await fetch(scriptUrl,{
+      method:'POST',mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'addPlayer',name})
+    });
+    // Agregar localmente y actualizar UI
+    players.push(name);savePlayers();
+    inp.value='';
+    renderForm();renderMgmt();
+    toast('Jugador agregado en Sheets','success');
+  }catch(e){
+    toast('Error al guardar en Sheets: '+e.message,'error');
+  }finally{
+    btn.disabled=false;btn.textContent='+';
   }
 }
 
-function deactivate(i){
-  if(confirm('¿Quitar a '+players[i]+'?')){
-    players.splice(i,1);savePlayers();renderForm();renderMgmt();toast('Jugador eliminado','success');
-  }
-}
 
 function savePlayers(){localStorage.setItem('club_players',JSON.stringify(players));}
 function saveCfg(){
@@ -722,29 +683,12 @@ function norm(n){
     const pts=p.toUpperCase().split(' ');
     if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();
   }
-  // Fallback: check against DEFAULT_PLAYERS
-  for(const p of DEFAULT_PLAYERS){
-    if(s===p.toUpperCase())return s;
-    const pts=p.toUpperCase().split(' ');
-    if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();
-  }
   return s;
 }
 
 function displayName(n){
   for(const p of players){if(p.toUpperCase()===n)return p;}
-  for(const p of DEFAULT_PLAYERS){if(p.toUpperCase()===n)return p;}
   return n.split(' ').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
-}
-
-function parseGvizDate(cell){
-  if(!cell||!cell.v)return null;
-  if(typeof cell.v==='string'&&cell.v.startsWith('Date(')){
-    const m=cell.v.match(/Date\((\d+),(\d+),(\d+)\)/);
-    if(m){const d=new Date(+m[1],+m[2],+m[3]);return d.toISOString().split('T')[0];}
-  }
-  if(cell.f){const p=cell.f.split('/');if(p.length===3)return`${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;}
-  return null;
 }
 
 function weekKey(ds){

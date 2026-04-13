@@ -166,8 +166,8 @@ function addNewPlayer(name) {
     // Create sheet if it doesn't exist
     if (!sheet) {
       sheet = spreadsheet.insertSheet(PLAYERS_SHEET_NAME);
-      // Add headers
-      sheet.appendRow(['Nombre', 'Fecha_Agregado', 'Activo']);
+      // Add headers matching the real sheet structure
+      sheet.appendRow(['Nombre', 'Litros/dia', 'Vianda', 'Remis', 'Monto Remis', 'Fecha']);
     }
 
     // Check if player already exists (column A)
