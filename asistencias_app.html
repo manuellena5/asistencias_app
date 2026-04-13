@@ -324,11 +324,11 @@ async function onDateChange(fecha){
       }catch(e){
         // fallback localStorage
         const stored=localStorage.getItem('att_'+fecha);
-        records=stored?JSON.parse(stored)||[];
+        records=stored?(JSON.parse(stored)||[]):[];
       }
     } else {
       const stored=localStorage.getItem('att_'+fecha);
-      records=stored?JSON.parse(stored)||[];
+      records=stored?(JSON.parse(stored)||[]):[];
     }
     cachedDateData[fecha]=records;
   }
