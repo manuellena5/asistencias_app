@@ -28,6 +28,9 @@ function doGet(e) {
       case 'getAllAttendance':
         response = getAllAttendanceData();
         break;
+      case 'getAttendanceDates':
+        response = getAttendanceDatesData();
+        break;
       default:
         response = { status: 'ok', message: 'Apps Script is running' };
     }
@@ -208,10 +211,14 @@ function getAttendanceData(fecha) {
 
     // Skip header row
     for (let i = 1; i < values.length; i++) {
-      if (values[i][1] === fecha) { // Fecha column
+      const cellFecha = values[i][1];
+      const cellStr = cellFecha instanceof Date
+        ? cellFecha.toISOString().split('T')[0]
+        : (cellFecha || '').toString().trim();
+      if (cellStr === fecha) {
         records.push({
           timestamp: values[i][0],
-          fecha: values[i][1],
+          fecha: cellStr,
           jugador: values[i][2],
           estado: values[i][3],
           observacion: values[i][4] || ''
@@ -338,6 +345,32 @@ function getReportsData(startDate, endDate) {
       status: 'error',
       message: error.toString()
     };
+  }
+}
+
+/**
+ * Get unique dates that have attendance records (lightweight — no player data)
+ */
+function getAttendanceDatesData() {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = spreadsheet.getSheetByName(ATTENDANCE_SHEET_NAME);
+    if (!sheet) return { status: 'success', dates: [] };
+
+    const values = sheet.getDataRange().getValues();
+    const datesSet = new Set();
+
+    for (let i = 1; i < values.length; i++) {
+      if (!values[i][1]) continue;
+      const fecha = values[i][1] instanceof Date
+        ? values[i][1].toISOString().split('T')[0]
+        : values[i][1].toString().trim();
+      if (fecha) datesSet.add(fecha);
+    }
+
+    return { status: 'success', dates: [...datesSet].sort() };
+  } catch (error) {
+    return { status: 'error', message: error.toString() };
   }
 }
 

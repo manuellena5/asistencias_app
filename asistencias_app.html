@@ -125,6 +125,18 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 @media(max-width:400px){.att-tbl{font-size:.7rem}.att-tbl .nm{min-width:90px}}
+
+.date-banner{padding:10px 14px;border-radius:var(--radius);font-size:.85rem;font-weight:600;margin-bottom:10px;display:none;align-items:center;gap:8px}
+.date-banner.loaded{display:flex;background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7}
+.date-banner.new{display:flex;background:var(--gray-light);color:var(--gray);border:1px solid var(--border)}
+.dates-strip{margin-bottom:12px;display:none}
+.dates-strip .strip-lbl{font-size:.72rem;color:var(--gray);font-weight:600;margin-bottom:6px;padding-left:2px}
+.dates-strip .chips{display:flex;flex-wrap:wrap;gap:6px}
+.date-chip{padding:5px 12px;border-radius:20px;font-size:.75rem;font-weight:600;cursor:pointer;background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;min-height:32px;transition:all .15s}
+.date-chip:active{background:var(--green);color:#fff}
+.form-placeholder{text-align:center;padding:40px 20px;color:var(--gray)}
+.form-placeholder .ico-big{font-size:3rem;margin-bottom:12px}
+.form-placeholder p{font-size:.95rem;font-weight:500}
 </style>
 </head>
 <body>
@@ -137,16 +149,31 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 <div class="main">
   <!-- ===== FORM ===== -->
   <div id="scr-form" class="screen active">
-    <input type="date" id="att-date" class="date-input" onchange="loadDateData(this.value)">
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:#fff;border-radius:8px;padding:10px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
-      <span style="font-size:.75rem;color:#6b7280;font-weight:600;width:100%;margin-bottom:2px">Referencias:</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#10b981">P</span> Presente</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#3b82f6">E/A</span> Entrena Afuera</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#f59e0b">J</span> Justificado</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#ef4444">A</span> Ausente</span>
+    <input type="date" id="att-date" class="date-input" onchange="onDateChange(this.value)">
+    <div id="dates-strip" class="dates-strip">
+      <div class="strip-lbl">📋 Días con datos cargados:</div>
+      <div id="dates-chips" class="chips"></div>
     </div>
-    <div id="att-list"></div>
-    <button class="btn btn-primary" id="btn-save" onclick="saveAttendance()">Guardar Asistencia</button>
+    <div id="form-placeholder" class="form-placeholder">
+      <div class="ico-big">📅</div>
+      <p>Seleccioná una fecha<br>para cargar la asistencia</p>
+    </div>
+    <div id="btn-load-wrap" style="display:none">
+      <button class="btn btn-primary" id="btn-load" onclick="loadDateData(document.getElementById('att-date').value)">Cargar Asistencia</button>
+    </div>
+    <div id="date-banner" class="date-banner"></div>
+    <div id="form-body" style="display:none">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:#fff;border-radius:8px;padding:10px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+        <span style="font-size:.75rem;color:#6b7280;font-weight:600;width:100%;margin-bottom:2px">Referencias:</span>
+        <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#10b981">P</span> Presente</span>
+        <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#3b82f6">E/A</span> Entrena Afuera</span>
+        <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#f59e0b">J</span> Justificado</span>
+        <span style="display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:#1f2937"><span style="display:inline-flex;width:26px;height:26px;border-radius:5px;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;background:#ef4444">A</span> Ausente</span>
+      </div>
+      <div id="att-list"></div>
+      <button class="btn btn-primary" id="btn-save" onclick="saveAttendance()">Guardar Asistencia</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:6px" onclick="resetForm()">Cambiar fecha</button>
+    </div>
   </div>
 
   <!-- ===== REPORTS ===== -->
@@ -205,6 +232,7 @@ let scriptUrl=localStorage.getItem('club_script_url')||'';
 let reportView='semanal';
 let allDays=[]; // [{date:'2026-03-16', players:{NOMBRE:status}}]
 let allObs={}; // {date:{NOMBRE:'obs text'}} — only for J status
+let loadedDates=new Set(); // dates that have attendance data in Sheets
 
 // ======================== INIT ========================
 document.addEventListener('DOMContentLoaded',async()=>{
@@ -213,7 +241,6 @@ document.addEventListener('DOMContentLoaded',async()=>{
 
   if(scriptUrl){
     // Mostrar loading mientras se cargan los jugadores desde Sheets
-    document.getElementById('att-list').innerHTML='<div class="loading"><div class="sp"></div>Cargando jugadores desde Sheets...</div>';
     document.getElementById('mgmt-list').innerHTML='<div class="loading"><div class="sp"></div><span>Cargando...</span></div>';
     try{
       const r=await fetch(scriptUrl+'?action=getPlayers');
@@ -222,6 +249,9 @@ document.addEventListener('DOMContentLoaded',async()=>{
         // Sheets es la fuente de verdad: reemplazar lista local
         players=j.players.map(p=>p.nombre);
         savePlayers();
+        // Si ya hay fecha seleccionada, recargar el form con la nueva lista
+        const fechaSel=document.getElementById('att-date').value;
+        if(fechaSel) loadDateData(fechaSel);
       } else if(!players.length){
         toast('La hoja Jugadores está vacía','error');
       }
@@ -237,8 +267,11 @@ document.addEventListener('DOMContentLoaded',async()=>{
     toast('Configurá la URL del Apps Script para cargar los jugadores','error');
   }
 
-  renderForm();
   renderMgmt();
+  fetchLoadedDates();
+  // Mostrar placeholder inicial
+  document.getElementById('form-placeholder').style.display='block';
+  document.getElementById('btn-load-wrap').style.display='none';
   requestNotificationPermission();
 });
 
@@ -256,26 +289,125 @@ function go(screen,btn){
 }
 
 // ======================== FORM ========================
+function onDateChange(fecha){
+  // Ocultar lista y mostrar botón cargar
+  document.getElementById('form-placeholder').style.display='none';
+  document.getElementById('form-body').style.display='none';
+  document.getElementById('date-banner').className='date-banner';
+  if(fecha){
+    const lbl=loadedDates.has(fecha)
+      ? '⚠️ Ya hay datos para '+formatDateLong(fecha)+' — Cargar'
+      : '📋 Cargar asistencia del '+formatDateLong(fecha);
+    document.getElementById('btn-load').textContent=lbl;
+    document.getElementById('btn-load-wrap').style.display='block';
+  } else {
+    document.getElementById('btn-load-wrap').style.display='none';
+    document.getElementById('form-placeholder').style.display='block';
+  }
+}
+
+function resetForm(){
+  document.getElementById('form-body').style.display='none';
+  document.getElementById('date-banner').className='date-banner';
+  const fecha=document.getElementById('att-date').value;
+  onDateChange(fecha);
+}
+
+function showFormBody(){
+  document.getElementById('form-placeholder').style.display='none';
+  document.getElementById('btn-load-wrap').style.display='none';
+  document.getElementById('form-body').style.display='block';
+}
+
 async function loadDateData(fecha){
   if(!fecha)return;
-  // 1) Try localStorage
-  const stored=localStorage.getItem('att_'+fecha);
-  if(stored){
-    try{
-      const recs=JSON.parse(stored);
-      if(recs&&recs.length>0){applyFormData(recs);toast('Datos del '+formatDateLong(fecha)+' cargados','success');return;}
-    }catch(e){}
-  }
-  // 2) Try Apps Script
+  const btnLoad=document.getElementById('btn-load');
+  btnLoad.disabled=true;
+  btnLoad.textContent='Cargando...';
+  document.getElementById('form-body').style.display='block';
+  document.getElementById('form-placeholder').style.display='none';
+  document.getElementById('btn-load-wrap').style.display='none';
+  renderForm();
+  // 1) Apps Script (fuente de verdad)
   if(scriptUrl){
     try{
       const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
       const j=await r.json();
-      if(j.status==='success'&&j.data&&j.data.length>0){applyFormData(j.data);toast('Datos del '+formatDateLong(fecha)+' cargados','success');return;}
+      if(j.status==='success'&&j.data&&j.data.length>0){
+        applyFormData(j.data);
+        updateDateBanner(fecha,'loaded');
+        btnLoad.disabled=false;
+        return;
+      }
     }catch(e){}
   }
-  // No data: reset all to P
+  // 2) Fallback localStorage
+  const stored=localStorage.getItem('att_'+fecha);
+  if(stored){
+    try{
+      const recs=JSON.parse(stored);
+      if(recs&&recs.length>0){
+        applyFormData(recs);
+        updateDateBanner(fecha,'loaded');
+        btnLoad.disabled=false;
+        return;
+      }
+    }catch(e){}
+  }
+  // Sin datos: todos P
   players.forEach((_,i)=>setStatus(i,'P'));
+  updateDateBanner(fecha,'new');
+  btnLoad.disabled=false;
+}
+
+function updateDateBanner(fecha, state){
+  const b=document.getElementById('date-banner');
+  b.className='date-banner';
+  if(state==='loaded'){
+    b.className='date-banner loaded';
+    b.innerHTML='✅&nbsp;<strong>'+formatDateLong(fecha)+'</strong>&nbsp;— datos cargados';
+  } else if(state==='new'){
+    b.className='date-banner new';
+    b.innerHTML='📝&nbsp;<strong>'+formatDateLong(fecha)+'</strong>&nbsp;— sin datos, nuevo registro';
+  }
+  // state==='loading' deja el banner oculto (class solo 'date-banner' = display:none)
+}
+
+async function fetchLoadedDates(){
+  if(!scriptUrl)return;
+  try{
+    const r=await fetch(scriptUrl+'?action=getAttendanceDates');
+    const j=await r.json();
+    if(j.status==='success'&&j.dates){
+      loadedDates=new Set(j.dates);
+      renderDatesStrip();
+      // Actualizar texto del botón si hay fecha seleccionada y el form no está abierto
+      const fecha=document.getElementById('att-date').value;
+      const formBodyVisible=document.getElementById('form-body').style.display!=='none';
+      if(fecha&&!formBodyVisible) onDateChange(fecha);
+    }
+  }catch(e){}
+}
+
+function renderDatesStrip(){
+  const strip=document.getElementById('dates-strip');
+  const chips=document.getElementById('dates-chips');
+  if(!loadedDates.size){strip.style.display='none';return;}
+  // Mostrar los últimos 10 días con datos, más reciente primero
+  const sorted=[...loadedDates].sort().reverse().slice(0,10);
+  chips.innerHTML='';
+  sorted.forEach(d=>{
+    const chip=document.createElement('button');
+    chip.className='date-chip';
+    chip.textContent=formatDateShort(d);
+    chip.title=formatDateLong(d);
+    chip.onclick=()=>{
+      document.getElementById('att-date').value=d;
+      loadDateData(d);
+    };
+    chips.appendChild(chip);
+  });
+  strip.style.display='block';
 }
 
 function applyFormData(records){
