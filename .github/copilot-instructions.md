@@ -48,7 +48,7 @@ PWA de registro de asistencias para un club deportivo, alojada en **GitHub Pages
 
 ```js
 // sw.js — línea 1
-const CACHE_NAME = 'asistencias-v11'; // <- incrementar este número
+const CACHE_NAME = 'asistencias-v13'; // <- incrementar este número
 ```
 
 **Por qué es obligatorio:** El SW usa estrategia cache-first. Sin cambiar la versión, los usuarios (especialmente en mobile instalado como PWA) seguirán viendo la versión anterior indefinidamente.

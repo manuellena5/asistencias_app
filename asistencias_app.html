@@ -321,6 +321,16 @@ function go(screen,btn){
   document.getElementById('hdr-title').textContent=titles[screen];
   document.getElementById('hdr-sub').textContent=subs[screen];
   if(screen==='reports')loadReports();
+  if(screen==='form')clearForm();
+}
+
+function clearForm(){
+  document.getElementById('att-date').value='';
+  document.getElementById('form-body').style.display='none';
+  document.getElementById('btn-load-wrap').style.display='none';
+  document.getElementById('form-checking').style.display='none';
+  document.getElementById('date-banner').className='date-banner';
+  document.getElementById('form-placeholder').style.display='block';
 }
 
 // ======================== FORM ========================
@@ -552,7 +562,10 @@ async function saveAttendance(){
       });
     }
 
-    toast('✓ Guardado — podés seguir editando','success');
+    toast('✓ Asistencia guardada','success');
+    // Ir a Reportes y limpiar el formulario
+    const navBtn=document.querySelector('.nav button:nth-child(2)');
+    go('reports',navBtn);
   }catch(e){
     toast('Error: '+e.message,'error');
   }finally{
