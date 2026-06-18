@@ -137,6 +137,30 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 .form-placeholder{text-align:center;padding:40px 20px;color:var(--gray)}
 .form-placeholder .ico-big{font-size:3rem;margin-bottom:12px}
 .form-placeholder p{font-size:.95rem;font-weight:500}
+/* Semanal cards */
+.semanal-card{background:#fff;border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.semanal-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.semanal-card-name{font-weight:600;font-size:.9rem}
+.semanal-card-bot{display:flex;justify-content:space-between;align-items:flex-end}
+.dots-row{display:flex;gap:4px;flex-wrap:wrap}
+.day-col{display:flex;flex-direction:column;align-items:center;gap:2px}
+.day-lbl{font-size:.58rem;color:var(--gray);font-weight:600}
+/* Week navigation bar */
+.week-nav-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.week-nav-btn{border:none;background:var(--gray-light);border-radius:8px;width:36px;height:36px;font-size:1.4rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:700}
+.week-nav-btn:disabled{opacity:.3;cursor:default;pointer-events:none}
+.week-nav-info{flex:1;text-align:center;font-size:.8rem;color:var(--gray);line-height:1.4}
+.week-nav-info strong{display:block;font-size:.85rem;color:var(--primary)}
+/* Toggle pills */
+.pills-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.pills{display:flex;background:var(--gray-light);border-radius:20px;padding:3px}
+.pill{border:none;background:transparent;border-radius:16px;padding:4px 10px;font-size:.78rem;cursor:pointer;color:var(--gray);font-weight:500}
+.pill.active{background:#fff;color:var(--primary);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+/* Totales ranking */
+.rank-num{font-size:.9rem;font-weight:700;color:var(--gray);min-width:24px}
+.progress-bar{height:6px;border-radius:3px;background:var(--gray-light);margin:6px 0 4px}
+.progress-fill{height:100%;border-radius:3px}
+.sort-dir-btn{border:none;background:var(--gray-light);border-radius:6px;padding:3px 8px;font-size:.75rem;cursor:pointer;color:var(--primary);font-weight:600;margin-left:auto}
 </style>
 </head>
 <body>
@@ -186,8 +210,9 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
       <button class="active" onclick="setReport('semanal',this)">Semanal</button>
       <button onclick="setReport('mensual',this)">Mensual</button>
       <button onclick="setReport('jugador',this)">Por Jugador</button>
+      <button onclick="setReport('totales',this)">Totales</button>
     </div>
-    <select id="period-sel" class="period-sel" onchange="renderReport()"></select>
+    <select id="period-sel" class="period-sel" style="display:none" onchange="renderReport()"></select>
     <select id="player-sel" class="period-sel" style="display:none" onchange="renderReport()"></select>
     <div id="report-out"></div>
   </div>
@@ -270,6 +295,10 @@ let allDays=[];
 let allObs={};
 let loadedDates=new Set();
 let cachedDateData={}; // {fecha: records[]} — cache de fetch por fecha
+let weekIdx=0;
+let semanalShowAll=false;
+let semanalSortBy='pct';
+let totalesAsc=false;
 
 // ======================== INIT ========================
 document.addEventListener('DOMContentLoaded',async()=>{
@@ -598,9 +627,12 @@ async function saveAttendance(){
 // ======================== REPORTS ========================
 function setReport(view,btn){
   reportView=view;
+  if(view==='semanal'){weekIdx=0;semanalShowAll=false;semanalSortBy='pct';}
   document.querySelectorAll('.report-tabs button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
+  const showPeriod=view==='mensual'||view==='jugador';
   document.getElementById('player-sel').style.display=view==='jugador'?'':'none';
+  document.getElementById('period-sel').style.display=showPeriod?'':'none';
   buildPeriodSelector();
   renderReport();
 }
@@ -655,6 +687,7 @@ async function loadReports(){
 }
 
 function buildPeriodSelector(){
+  if(reportView==='semanal'||reportView==='totales')return;
   const sel=document.getElementById('period-sel');
   sel.innerHTML='';
   if(reportView==='mensual'){
@@ -670,60 +703,166 @@ function buildPeriodSelector(){
 function renderReport(){
   if(reportView==='semanal')renderWeekly();
   else if(reportView==='mensual')renderMonthly();
+  else if(reportView==='totales')renderTotales();
   else renderPlayer();
 }
 
+function getWeekDays(wk){
+  const days=[];
+  for(let i=0;i<7;i++){
+    const d=new Date(wk+'T12:00:00');
+    d.setDate(d.getDate()+i);
+    days.push(d.toISOString().split('T')[0]);
+  }
+  return days;
+}
+function changeWeek(dir){weekIdx+=dir;renderReport();}
+function setSemanalFilter(mode){semanalShowAll=(mode==='full');renderReport();}
+function setSemanalSort(sort){semanalSortBy=sort;renderReport();}
+function toggleTotalesSort(){totalesAsc=!totalesAsc;renderReport();}
+
 function renderWeekly(){
   const out=document.getElementById('report-out');
-  const sel=document.getElementById('period-sel').value;
-  let data=sel==='all'?allDays:allDays.filter(d=>weekKey(d.date)===sel);
-  if(!data.length){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos para este período.</div>';return;}
+  const weeks=[...new Set(allDays.map(d=>weekKey(d.date)))].sort().reverse();
+  if(!weeks.length){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos disponibles.</div>';return;}
 
-  const total=data.length;
-  const allP=[...new Set([...players.map(p=>norm(p)),...data.flatMap(d=>Object.keys(d.players))])].sort();
+  weekIdx=Math.max(0,Math.min(weekIdx,weeks.length-1));
+  const curWeek=weeks[weekIdx];
+  const weekData=allDays.filter(d=>weekKey(d.date)===curWeek);
+  const practiceDays=weekData.map(d=>d.date);
+  const total=practiceDays.length;
 
-  // Calc attendance
+  const displayDays=semanalShowAll?getWeekDays(curWeek):practiceDays;
+
+  const allP=[...new Set([...players.map(p=>norm(p)),...weekData.flatMap(d=>Object.keys(d.players))])];
   const att={};
-  allP.forEach(p=>{att[p]={count:0};});
-  data.forEach(d=>{
+  allP.forEach(p=>{att[p]=0;});
+  weekData.forEach(d=>{
     Object.entries(d.players).forEach(([p,st])=>{
-      if(!att[p])att[p]={count:0};
-      if(st==='P'||st==='E/A')att[p].count++;
+      if(!att.hasOwnProperty(p))att[p]=0;
+      if(st==='P'||st==='E/A')att[p]++;
     });
   });
 
-  const sortedP=allP.sort((a,b)=>(att[b]?.count||0)-(att[a]?.count||0));
-  const avgPct=sortedP.length?Math.round(sortedP.reduce((s,p)=>s+((att[p]?.count||0)/total*100),0)/sortedP.length):0;
+  const sortedP=total===0?[...allP]:semanalSortBy==='name'
+    ?[...allP].sort((a,b)=>displayName(a).localeCompare(displayName(b)))
+    :[...allP].sort((a,b)=>(att[b]||0)-(att[a]||0));
+
+  const avgPct=sortedP.length&&total?Math.round(sortedP.reduce((s,p)=>s+(att[p]||0)/total*100,0)/sortedP.length):0;
+  const isNewest=weekIdx===0;
+  const prevDis=weekIdx>=weeks.length-1;
+  const nextDis=weekIdx<=0;
+
+  let h=`<div class="week-nav-bar">
+    <button class="week-nav-btn" onclick="changeWeek(1)" ${prevDis?'disabled':''}>&#8249;</button>
+    <div class="week-nav-info">
+      <strong>${formatWeek(curWeek)}</strong>
+      ${total} práctica${total!==1?'s':''} · ${avgPct}% prom.${isNewest?' · Semana actual':''}
+    </div>
+    <button class="week-nav-btn" onclick="changeWeek(-1)" ${nextDis?'disabled':''}>&#8250;</button>
+  </div>
+  <div class="pills-row">
+    <div class="pills">
+      <button class="pill${!semanalShowAll?' active':''}" onclick="setSemanalFilter('only')">Solo con datos</button>
+      <button class="pill${semanalShowAll?' active':''}" onclick="setSemanalFilter('full')">Semana completa</button>
+    </div>
+    <div class="pills">
+      <button class="pill${semanalSortBy==='pct'?' active':''}" onclick="setSemanalSort('pct')">% ↓</button>
+      <button class="pill${semanalSortBy==='name'?' active':''}" onclick="setSemanalSort('name')">A-Z</button>
+    </div>
+  </div>`;
+
+  if(!sortedP.length){
+    h+='<div class="card" style="padding:16px;text-align:center;color:var(--gray)">Sin jugadores registrados.</div>';
+  } else {
+    sortedP.forEach(p=>{
+      const cnt=att[p]||0;
+      const pct=total?Math.round(cnt/total*100):0;
+      const bc=pct>=75?'badge-g':pct>=50?'badge-y':'badge-r';
+      let dotsH='';
+      displayDays.forEach(date=>{
+        const hasPractice=practiceDays.includes(date);
+        const lbl=formatDateShort(date).split(' ')[0];
+        if(!hasPractice){
+          dotsH+=`<div class="day-col" style="opacity:.3"><div class="day-lbl">${lbl}</div><div class="dot none">—</div></div>`;
+        } else {
+          const dayRec=weekData.find(d=>d.date===date);
+          const st=dayRec?.players[p]||'';
+          if(st){
+            const cls=st==='E/A'?'EA':st;
+            dotsH+=`<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot ${cls}">${st}</div></div>`;
+          } else {
+            dotsH+=`<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot none">—</div></div>`;
+          }
+        }
+      });
+      h+=`<div class="semanal-card">
+        <div class="semanal-card-top">
+          <span class="semanal-card-name">${displayName(p)}</span>
+          <span class="badge ${bc}">${pct}%</span>
+        </div>
+        <div class="semanal-card-bot">
+          <div class="dots-row">${dotsH}</div>
+          <div style="font-size:.8rem;color:var(--gray);white-space:nowrap;margin-left:8px">${cnt}/${total} pract.</div>
+        </div>
+      </div>`;
+    });
+  }
+
+  out.innerHTML=h;
+}
+
+function renderTotales(){
+  const out=document.getElementById('report-out');
+  const total=allDays.length;
+  if(!total){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos disponibles.</div>';return;}
+
+  const allP=[...new Set([...players.map(p=>norm(p)),...allDays.flatMap(d=>Object.keys(d.players))])];
+  const att={};
+  allP.forEach(p=>{att[p]=0;});
+  allDays.forEach(d=>{
+    Object.entries(d.players).forEach(([p,st])=>{
+      if(!att.hasOwnProperty(p))att[p]=0;
+      if(st==='P'||st==='E/A')att[p]++;
+    });
+  });
+
+  const sortedP=[...allP].sort((a,b)=>{
+    const pa=total?(att[a]||0)/total*100:0;
+    const pb=total?(att[b]||0)/total*100:0;
+    return totalesAsc?pa-pb:pb-pa;
+  });
+
+  const avgPct=sortedP.length?Math.round(sortedP.reduce((s,p)=>s+(att[p]||0)/total*100,0)/sortedP.length):0;
   const bc=avgPct>=75?'badge-g':avgPct>=50?'badge-y':'badge-r';
 
-  let h=`<div class="card"><div class="card-hdr">${sel==='all'?'Resumen General':'Semana '+formatWeek(sel)}<span class="badge ${bc}">${avgPct}% prom</span></div>
+  let h=`<div class="card">
+    <div class="card-hdr">Ranking General<span class="badge ${bc}">${avgPct}% prom</span><button class="sort-dir-btn" onclick="toggleTotalesSort()">${totalesAsc?'↑ Menor primero':'↓ Mayor primero'}</button></div>
     <div class="stats">
       <div class="stat"><div class="n">${total}</div><div class="l">Prácticas</div></div>
       <div class="stat"><div class="n">${sortedP.length}</div><div class="l">Jugadores</div></div>
-      <div class="stat"><div class="n">${avgPct}%</div><div class="l">Asistencia</div></div>
-    </div></div>`;
+      <div class="stat"><div class="n">${avgPct}%</div><div class="l">Promedio</div></div>
+    </div>
+  </div>`;
 
-  h+=`<div class="card"><div class="card-hdr">Detalle por Jugador</div><div class="att-wrap"><table class="att-tbl"><thead><tr><th class="nm">Jugador</th>`;
-  data.forEach(d=>{h+=`<th>${formatDateShort(d.date)}</th>`;});
-  h+=`<th>Total</th><th>%</th></tr></thead><tbody>`;
-
-  sortedP.forEach(p=>{
-    const pct=Math.round((att[p]?.count||0)/total*100);
-    const col=pctColor(pct);
-    h+=`<tr><td class="nm">${displayName(p)}</td>`;
-    data.forEach(d=>{
-      const st=d.players[p]||'';
-      if(st){
-        const cls=st==='E/A'?'EA':st;
-        h+=`<td><span class="dot ${cls}">${st}</span></td>`;
-      }else{
-        h+=`<td><span class="dot none">-</span></td>`;
-      }
-    });
-    h+=`<td style="font-weight:600">${att[p]?.count||0}/${total}</td>`;
-    h+=`<td style="font-weight:700;color:${col}">${pct}%</td></tr>`;
+  sortedP.forEach((p,i)=>{
+    const cnt=att[p]||0;
+    const pct=total?Math.round(cnt/total*100):0;
+    const pbc=pct>=75?'badge-g':pct>=50?'badge-y':'badge-r';
+    const fillColor=pct>=75?'var(--green)':pct>=50?'var(--yellow)':'var(--red)';
+    h+=`<div class="semanal-card">
+      <div class="semanal-card-top">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="rank-num">#${i+1}</span>
+          <span class="semanal-card-name">${displayName(p)}</span>
+        </div>
+        <span class="badge ${pbc}">${pct}%</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+      <div style="font-size:.8rem;color:var(--gray)">${cnt} presentes / ${total} prácticas</div>
+    </div>`;
   });
-  h+=`</tbody></table></div></div>`;
+
   out.innerHTML=h;
 }
 
