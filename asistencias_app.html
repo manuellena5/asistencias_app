@@ -210,6 +210,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/..." style="width:100%;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:.85rem;margin-bottom:8px;font-family:inherit">
         <p style="font-size:.75rem;color:var(--gray);margin-bottom:10px">Pegá la URL del Web App desplegado en Google Apps Script.</p>
         <button class="btn btn-primary" onclick="saveCfg()">Guardar URL</button>
+        <p style="font-size:.75rem;color:var(--gray);margin-top:10px;padding:8px;background:var(--bg);border-radius:6px;border-left:3px solid var(--border)">ℹ️ La app ya tiene una URL configurada por defecto. Solo modificá esto si se te indica hacerlo.</p>
       </div>
     </div>
     <div class="card">
@@ -229,6 +230,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
       </div>
     </div>
   </div>
+  <p id="app-version-label" style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px"></p>
 </div>
 
 <div class="nav">
@@ -240,7 +242,9 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
+const APP_VERSION='1.1.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
+const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 const DIAS_L=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -254,9 +258,12 @@ const ALIASES={
   'VILLARUEL DARIO CACO':'VILLARUEL DANIEL'
 };
 
+// ======================== MODE ========================
+const APP_MODE=new URLSearchParams(window.location.search).get('mode')||'';
+
 // ======================== STATE ========================
 let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
-let scriptUrl=localStorage.getItem('club_script_url')||'';
+let scriptUrl=localStorage.getItem('club_script_url')||DEFAULT_SCRIPT_URL;
 let defaultStatus=localStorage.getItem('club_default_status')||'A';
 let reportView='semanal';
 let allDays=[];
@@ -268,6 +275,7 @@ let cachedDateData={}; // {fecha: records[]} — cache de fetch por fecha
 document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('att-date').value=new Date().toISOString().split('T')[0];
   document.getElementById('cfg-url').value=scriptUrl;
+  document.getElementById('app-version-label').textContent='v'+APP_VERSION;
   // Aplicar estado por defecto guardado en el radio
   document.querySelectorAll('input[name="default-status"]').forEach(r=>{
     r.checked=(r.value===defaultStatus);
@@ -308,6 +316,21 @@ document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('form-placeholder').style.display='block';
   document.getElementById('btn-load-wrap').style.display='none';
   requestNotificationPermission();
+
+  // Aplicar modo según parámetro ?mode= de la URL
+  const navBtns=document.querySelectorAll('.nav button');
+  if(APP_MODE==='carga'){
+    navBtns[1].style.display='none'; // Reportes
+    navBtns[2].style.display='none'; // Jugadores
+    navBtns[3].style.display='none'; // Config
+    document.getElementById('hdr-sub').textContent='Modo: Carga de asistencia';
+  } else if(APP_MODE==='viewer'){
+    navBtns[0].style.display='none'; // Asistencia
+    navBtns[2].style.display='none'; // Jugadores
+    navBtns[3].style.display='none'; // Config
+    document.getElementById('hdr-sub').textContent='Modo: Consulta de reportes';
+    go('reports',navBtns[1]);
+  }
 });
 
 // ======================== NAVIGATION ========================
