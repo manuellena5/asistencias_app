@@ -229,8 +229,8 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         </div>
       </div>
     </div>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px">v1.1.0</p>
   </div>
-  <p id="app-version-label" style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px"></p>
 </div>
 
 <div class="nav">
@@ -275,7 +275,6 @@ let cachedDateData={}; // {fecha: records[]} — cache de fetch por fecha
 document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('att-date').value=new Date().toISOString().split('T')[0];
   document.getElementById('cfg-url').value=scriptUrl;
-  document.getElementById('app-version-label').textContent='v'+APP_VERSION;
   // Aplicar estado por defecto guardado en el radio
   document.querySelectorAll('input[name="default-status"]').forEach(r=>{
     r.checked=(r.value===defaultStatus);
