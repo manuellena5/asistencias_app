@@ -173,23 +173,15 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 <div class="main">
   <!-- ===== FORM ===== -->
   <div id="scr-form" class="screen active">
-    <input type="date" id="att-date" class="date-input" onchange="onDateChange(this.value)">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="date" id="att-date" class="date-input" style="margin-bottom:0" onchange="onDateChange(this.value)">
+      <button class="btn-sm btn-sec" style="min-height:48px;flex-shrink:0" onclick="setToday()">Hoy</button>
+    </div>
     <div id="dates-strip" class="dates-strip">
       <div class="strip-lbl">📋 Días con datos cargados:</div>
       <div id="dates-chips" class="chips"></div>
     </div>
-    <div id="form-placeholder" class="form-placeholder">
-      <div class="ico-big">📅</div>
-      <p>Seleccioná una fecha<br>para cargar la asistencia</p>
-    </div>
-    <div id="form-checking" style="display:none;align-items:center;gap:10px;padding:14px;background:#fff;border-radius:var(--radius);margin-bottom:10px;box-shadow:var(--shadow)">
-      <div style="width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
-      <span class="check-msg" style="font-size:.9rem;color:var(--gray);font-weight:500"></span>
-    </div>
-    <div id="btn-load-wrap" style="display:none">
-      <button class="btn btn-primary" id="btn-load" onclick="loadDateData(document.getElementById('att-date').value)">Cargar Asistencia</button>
-    </div>
-    <div id="date-banner" class="date-banner"></div>
+    <div id="status-card"></div>
     <div id="form-body" style="display:none">
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;background:#fff;border-radius:8px;padding:10px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
         <span style="font-size:.75rem;color:#6b7280;font-weight:600;width:100%;margin-bottom:2px">Referencias:</span>
@@ -206,6 +198,13 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
   <!-- ===== REPORTS ===== -->
   <div id="scr-reports" class="screen">
+    <div class="pills-row" id="torneo-filter-row">
+      <div class="pills">
+        <button class="pill" data-t="apertura" onclick="setTorneoFilter('apertura',this)">Apertura</button>
+        <button class="pill active" data-t="clausura" onclick="setTorneoFilter('clausura',this)">Clausura</button>
+        <button class="pill" data-t="todos" onclick="setTorneoFilter('todos',this)">Todo</button>
+      </div>
+    </div>
     <div class="report-tabs">
       <button class="active" onclick="setReport('semanal',this)">Semanal</button>
       <button onclick="setReport('mensual',this)">Mensual</button>
@@ -254,7 +253,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         </div>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px">v1.1.0</p>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px">v1.2.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -267,7 +266,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.1.0';
+const APP_VERSION='1.2.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -291,7 +290,10 @@ let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
 let scriptUrl=localStorage.getItem('club_script_url')||DEFAULT_SCRIPT_URL;
 let defaultStatus=localStorage.getItem('club_default_status')||'A';
 let reportView='semanal';
-let allDays=[];
+const TORNEO_CUTOFF='2026-07-01'; // Inicio Torneo Clausura
+let torneoFilter=localStorage.getItem('club_torneo_filter')||'clausura';
+let rawAllDays=[]; // todos los días traídos del servidor, sin filtrar por torneo
+let allDays=[]; // subset filtrado por torneo, usado por los reportes
 let allObs={};
 let loadedDates=new Set();
 let cachedDateData={}; // {fecha: records[]} — cache de fetch por fecha
@@ -340,9 +342,8 @@ document.addEventListener('DOMContentLoaded',async()=>{
 
   renderMgmt();
   fetchLoadedDates(); // en background, solo para los chips
-  // Mostrar placeholder inicial
-  document.getElementById('form-placeholder').style.display='block';
-  document.getElementById('btn-load-wrap').style.display='none';
+  // Mostrar estado inicial
+  renderStatusCard('empty');
   requestNotificationPermission();
 
   // Aplicar modo según parámetro ?mode= de la URL
@@ -378,28 +379,64 @@ function go(screen,btn){
 function clearForm(){
   document.getElementById('att-date').value='';
   document.getElementById('form-body').style.display='none';
-  document.getElementById('btn-load-wrap').style.display='none';
-  document.getElementById('form-checking').style.display='none';
-  document.getElementById('date-banner').className='date-banner';
-  document.getElementById('form-placeholder').style.display='block';
+  renderStatusCard('empty');
+}
+
+function setToday(){
+  const d=new Date().toISOString().split('T')[0];
+  document.getElementById('att-date').value=d;
+  onDateChange(d);
 }
 
 // ======================== FORM ========================
+// Estado único de la tarjeta de estado (reemplaza placeholder + checking + botón + banner)
+function renderStatusCard(state,fecha){
+  const c=document.getElementById('status-card');
+  if(state==='empty'){
+    c.className='form-placeholder';
+    c.style.padding='';
+    c.innerHTML='<div class="ico-big">📅</div><p>Elegí una fecha<br>para cargar la asistencia</p>';
+  } else if(state==='checking'){
+    c.className='card';
+    c.style.padding='14px';
+    c.innerHTML=`<div style="display:flex;align-items:center;gap:10px">
+      <div style="width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
+      <span style="font-size:.9rem;color:var(--gray);font-weight:500">Verificando ${formatDateLong(fecha)}...</span>
+    </div>`;
+  } else if(state==='prompt-new'){
+    c.className='card';
+    c.style.padding='16px';
+    c.innerHTML=`<div style="text-align:center">
+      <div style="font-size:.85rem;color:var(--gray);margin-bottom:10px">📝 <strong style="color:#1f2937">${formatDateLong(fecha)}</strong> todavía no tiene asistencia cargada</div>
+      <button class="btn btn-primary" style="margin-top:0" onclick="loadDateData('${fecha}')">Cargar asistencia</button>
+    </div>`;
+  } else if(state==='prompt-loaded'){
+    c.className='card';
+    c.style.padding='16px';
+    c.innerHTML=`<div style="text-align:center">
+      <div style="font-size:.85rem;color:var(--green-text);margin-bottom:10px">✅ <strong style="color:#1f2937">${formatDateLong(fecha)}</strong> ya tiene asistencia cargada</div>
+      <button class="btn btn-primary" style="margin-top:0" onclick="loadDateData('${fecha}')">Ver / Editar</button>
+    </div>`;
+  } else if(state==='banner-new'){
+    c.className='date-banner new';
+    c.style.padding='';
+    c.innerHTML=`📝&nbsp;<strong>${formatDateLong(fecha)}</strong>&nbsp;— sin datos, nuevo registro`;
+  } else if(state==='banner-loaded'){
+    c.className='date-banner loaded';
+    c.style.padding='';
+    c.innerHTML=`✅&nbsp;<strong>${formatDateLong(fecha)}</strong>&nbsp;— datos cargados`;
+  }
+}
+
 async function onDateChange(fecha){
   document.getElementById('form-body').style.display='none';
-  document.getElementById('date-banner').className='date-banner';
-  document.getElementById('btn-load-wrap').style.display='none';
-  document.getElementById('form-placeholder').style.display='none';
 
   if(!fecha){
-    document.getElementById('form-placeholder').style.display='block';
+    renderStatusCard('empty');
     return;
   }
 
-  // Mostrar estado "verificando"
-  const checkDiv=document.getElementById('form-checking');
-  checkDiv.style.display='flex';
-  checkDiv.querySelector('.check-msg').textContent='Verificando '+formatDateLong(fecha)+'...';
+  renderStatusCard('checking',fecha);
 
   // Si ya está cacheado, usar cache
   let records=null;
@@ -424,57 +461,29 @@ async function onDateChange(fecha){
     cachedDateData[fecha]=records;
   }
 
-  checkDiv.style.display='none';
-
   const hasData=records&&records.length>0;
-  const btn=document.getElementById('btn-load');
-  if(hasData){
-    btn.textContent='⚠️ '+formatDateLong(fecha)+' ya tiene datos — Cargar';
-    btn.className='btn btn-primary';
-  } else {
-    btn.textContent='📋 Cargar asistencia del '+formatDateLong(fecha);
-    btn.className='btn btn-primary';
-  }
-  btn.disabled=false;
-  document.getElementById('btn-load-wrap').style.display='block';
+  renderStatusCard(hasData?'prompt-loaded':'prompt-new',fecha);
 }
 
 function resetForm(){
   document.getElementById('form-body').style.display='none';
-  document.getElementById('date-banner').className='date-banner';
   const fecha=document.getElementById('att-date').value;
   onDateChange(fecha);
 }
 
 function loadDateData(fecha){
   if(!fecha)return;
-  document.getElementById('form-placeholder').style.display='none';
-  document.getElementById('btn-load-wrap').style.display='none';
-  document.getElementById('form-checking').style.display='none';
   renderForm();
   document.getElementById('form-body').style.display='block';
 
   const records=cachedDateData[fecha]||[];
   if(records.length>0){
     applyFormData(records);
-    updateDateBanner(fecha,'loaded');
+    renderStatusCard('banner-loaded',fecha);
   } else {
     players.forEach((_,i)=>setStatus(i,defaultStatus));
-    updateDateBanner(fecha,'new');
+    renderStatusCard('banner-new',fecha);
   }
-}
-
-function updateDateBanner(fecha, state){
-  const b=document.getElementById('date-banner');
-  b.className='date-banner';
-  if(state==='loaded'){
-    b.className='date-banner loaded';
-    b.innerHTML='✅&nbsp;<strong>'+formatDateLong(fecha)+'</strong>&nbsp;— datos cargados';
-  } else if(state==='new'){
-    b.className='date-banner new';
-    b.innerHTML='📝&nbsp;<strong>'+formatDateLong(fecha)+'</strong>&nbsp;— sin datos, nuevo registro';
-  }
-  // state==='loading' deja el banner oculto (class solo 'date-banner' = display:none)
 }
 
 async function fetchLoadedDates(){
@@ -640,8 +649,14 @@ function setReport(view,btn){
 async function loadReports(){
   const out=document.getElementById('report-out');
   out.innerHTML='<div class="loading"><div class="sp"></div>Cargando datos...</div>';
+  rawAllDays=[];
   allDays=[];
   allObs={};
+
+  // Reflejar el filtro de torneo guardado en los botones
+  document.querySelectorAll('#torneo-filter-row .pill').forEach(b=>{
+    b.classList.toggle('active',b.dataset.t===torneoFilter);
+  });
 
   if(!scriptUrl){
     out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">Configurá la URL del Apps Script para ver los reportes.</div>';
@@ -663,27 +678,46 @@ async function loadReports(){
         }
       });
       for(const[date,pmap]of Object.entries(byDate)){
-        allDays.push({date,players:pmap});
+        rawAllDays.push({date,players:pmap});
       }
     }
 
-    allDays.sort((a,b)=>a.date.localeCompare(b.date));
+    rawAllDays.sort((a,b)=>a.date.localeCompare(b.date));
 
-    // Build player select
+    // Build player select (siempre sobre el set completo, sin filtrar por torneo)
     const psel=document.getElementById('player-sel');
     psel.innerHTML='';
     const allP=new Set();
-    allDays.forEach(d=>Object.keys(d.players).forEach(p=>allP.add(p)));
+    rawAllDays.forEach(d=>Object.keys(d.players).forEach(p=>allP.add(p)));
     players.forEach(p=>allP.add(norm(p)));
     [...allP].sort().forEach(p=>{
       const o=document.createElement('option');o.value=p;o.textContent=displayName(p);psel.appendChild(o);
     });
 
-    buildPeriodSelector();
-    renderReport();
+    applyTorneoFilter();
   }catch(e){
     out.innerHTML=`<div class="card" style="padding:20px;text-align:center;color:var(--red)">Error cargando datos: ${e.message}</div>`;
   }
+}
+
+// ======================== FILTRO DE TORNEO ========================
+function setTorneoFilter(v,btn){
+  torneoFilter=v;
+  localStorage.setItem('club_torneo_filter',v);
+  document.querySelectorAll('#torneo-filter-row .pill').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  applyTorneoFilter();
+}
+
+function applyTorneoFilter(){
+  allDays=rawAllDays.filter(d=>{
+    if(torneoFilter==='todos')return true;
+    if(torneoFilter==='clausura')return d.date>=TORNEO_CUTOFF;
+    return d.date<TORNEO_CUTOFF; // apertura
+  });
+  weekIdx=0;
+  buildPeriodSelector();
+  renderReport();
 }
 
 function buildPeriodSelector(){
@@ -946,8 +980,21 @@ function renderPlayer(){
       <div class="stat"><div class="n" style="color:${pctColor(pct)}">${pct}%</div><div class="l">Asistencia</div></div>
     </div></div>`;
 
+  // Tendencia reciente: últimas prácticas de un vistazo, más reciente a la derecha
+  if(details.length){
+    const trend=details.slice(-8);
+    let trendH='';
+    trend.forEach(d=>{
+      const cls=d.status==='E/A'?'EA':d.status;
+      const lbl=formatDateShort(d.date).split(' ')[0];
+      trendH+=`<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot ${cls}" title="${formatDateLong(d.date)}">${d.status}</div></div>`;
+    });
+    h+=`<div class="card"><div class="card-hdr">Tendencia reciente</div><div style="padding:12px;display:flex;gap:6px;flex-wrap:wrap">${trendH}</div></div>`;
+  }
+
   h+=`<div class="card"><div class="card-hdr">Historial</div>`;
-  details.forEach(d=>{
+  // Más reciente primero
+  details.slice().reverse().forEach(d=>{
     const cls=d.status==='E/A'?'EA':d.status;
     const stLabel={P:'Presente','E/A':'Entrena Afuera',J:'Justificado',A:'Ausente'}[d.status]||d.status;
     const obsHtml=d.status==='J'&&d.obs?`<span style="font-size:.78rem;color:var(--gray);font-style:italic;display:block;margin-top:2px">"${d.obs}"</span>`:'';
