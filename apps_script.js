@@ -69,13 +69,13 @@ function doPost(e) {
         response = saveAttendanceData(data.data, data.overwrite === true);
         break;
       case 'addPlayer':
-        response = addNewPlayer(data.name);
+        response = addNewPlayer(data.name, data.id);
         break;
       case 'setPlayerActivo':
-        response = setPlayerActivo(data.name, data.activo);
+        response = setPlayerActivo(data.id, data.activo, data.name);
         break;
       case 'renamePlayer':
-        response = renamePlayer(data.oldName, data.newName);
+        response = renamePlayer(data.id, data.newName, data.oldName);
         break;
       default:
         response = { status: 'error', message: 'Unknown action' };
@@ -111,7 +111,7 @@ function saveAttendanceData(records, overwrite) {
     // Create sheet if it doesn't exist
     if (!sheet) {
       sheet = spreadsheet.insertSheet(ATTENDANCE_SHEET_NAME);
-      sheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación']);
+      sheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID']);
     }
 
     // If overwrite: delete all existing rows for this date before inserting
@@ -130,14 +130,16 @@ function saveAttendanceData(records, overwrite) {
       }
     }
 
-    // Append new records
+    // Append new records — columna F guarda el ID estable del jugador
+    // (si el nombre se renombra después, el registro sigue mapeado por ID)
     records.forEach(record => {
       sheet.appendRow([
         record.timestamp,
         record.fecha,
         record.jugador,
         record.estado,
-        record.observacion || ''
+        record.observacion || '',
+        record.jugadorId || ''
       ]);
     });
 
@@ -155,9 +157,11 @@ function saveAttendanceData(records, overwrite) {
 }
 
 /**
- * Add a new player to the Jugadores sheet
+ * Add a new player to the Jugadores sheet.
+ * El ID lo genera el cliente (porque el guardado usa no-cors y no puede leer
+ * la respuesta del servidor); si por algún motivo no llega, se genera acá.
  */
-function addNewPlayer(name) {
+function addNewPlayer(name, id) {
   try {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     let sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
@@ -165,8 +169,7 @@ function addNewPlayer(name) {
     // Create sheet if it doesn't exist
     if (!sheet) {
       sheet = spreadsheet.insertSheet(PLAYERS_SHEET_NAME);
-      // Add headers matching the real sheet structure
-      sheet.appendRow(['Nombre', 'Litros/dia', 'Vianda', 'Remis', 'Monto Remis', 'Fecha']);
+      sheet.appendRow(['Nombre', 'Activo', 'ID']);
     }
 
     // Check if player already exists (column A)
@@ -181,12 +184,14 @@ function addNewPlayer(name) {
       }
     }
 
-    // Add new player — only write the name in column A
-    sheet.appendRow([name]);
+    const newId = (id && id.toString().trim()) || Utilities.getUuid();
+    // Nombre en columna A, Activo en B (vacío = activo), ID en C
+    sheet.appendRow([name, '', newId]);
 
     return {
       status: 'success',
-      message: `Player ${name} added successfully`
+      message: `Player ${name} added successfully`,
+      id: newId
     };
   } catch (error) {
     return {
@@ -227,7 +232,8 @@ function getAttendanceData(fecha) {
           fecha: cellStr,
           jugador: values[i][2],
           estado: values[i][3],
-          observacion: values[i][4] || ''
+          observacion: values[i][4] || '',
+          jugadorId: values[i][5] || ''
         });
       }
     }
@@ -246,7 +252,10 @@ function getAttendanceData(fecha) {
 }
 
 /**
- * Get all players data
+ * Get all players data. Columnas: A=Nombre, B=Activo, C=ID.
+ * Si una fila no tiene ID todavía (jugadores cargados antes de este cambio),
+ * se le genera uno acá mismo y se graba en la hoja (auto-migración, sin
+ * necesidad de tocar nada a mano).
  */
 function getPlayersData() {
   try {
@@ -264,14 +273,18 @@ function getPlayersData() {
     const values = range.getValues();
     const players = [];
 
-    // Skip header row — leer columna A (Nombre) y columna G (Activo)
-    // Columna G: 'NO' = inactivo, cualquier otro valor (o vacío) = activo
     for (let i = 1; i < values.length; i++) {
       const nombre = (values[i][0] || '').toString().trim();
-      if (nombre) {
-        const activoRaw = (values[i][6] || '').toString().trim().toUpperCase();
-        players.push({ nombre: nombre, activo: activoRaw !== 'NO' });
+      if (!nombre) continue;
+
+      const activoRaw = (values[i][1] || '').toString().trim().toUpperCase();
+      let id = (values[i][2] || '').toString().trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(i + 1, 3).setValue(id); // backfill columna C
       }
+
+      players.push({ nombre: nombre, activo: activoRaw !== 'NO', id: id });
     }
 
     return {
@@ -288,11 +301,13 @@ function getPlayersData() {
 }
 
 /**
- * Activar o desactivar un jugador (columna G de la hoja Jugadores).
- * Los jugadores desactivados mantienen todo su historial de asistencias,
- * pero dejan de aparecer en la carga de asistencia y en los reportes.
+ * Activar o desactivar un jugador (columna B de la hoja Jugadores).
+ * Se busca por ID (columna C); si no llega ID (clientes viejos) se hace
+ * fallback por nombre. Los jugadores desactivados mantienen todo su
+ * historial de asistencias, pero dejan de aparecer en la carga y en los
+ * reportes.
  */
-function setPlayerActivo(name, activo) {
+function setPlayerActivo(id, activo, name) {
   try {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     const sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
@@ -302,9 +317,13 @@ function setPlayerActivo(name, activo) {
 
     const values = sheet.getDataRange().getValues();
     for (let i = 1; i < values.length; i++) {
-      const nombre = (values[i][0] || '').toString().trim();
-      if (nombre.toLowerCase() === (name || '').toString().trim().toLowerCase()) {
-        sheet.getRange(i + 1, 7).setValue(activo ? '' : 'NO'); // columna G = Activo
+      const rowId = (values[i][2] || '').toString().trim();
+      const rowNombre = (values[i][0] || '').toString().trim();
+      const matches = id
+        ? rowId === id.toString().trim()
+        : rowNombre.toLowerCase() === (name || '').toString().trim().toLowerCase();
+      if (matches) {
+        sheet.getRange(i + 1, 2).setValue(activo ? '' : 'NO'); // columna B = Activo
         return { status: 'success', message: 'Estado actualizado' };
       }
     }
@@ -318,12 +337,14 @@ function setPlayerActivo(name, activo) {
 }
 
 /**
- * Cambiar el nombre de un jugador (columna A de la hoja Jugadores).
- * El historial de asistencias ya guardado con el nombre viejo NO se modifica;
- * la app usa un mapa de alias en el cliente para seguir agrupando esos registros
- * bajo el nombre nuevo.
+ * Cambiar el nombre de un jugador (columna A). Se busca por ID (columna C);
+ * si no llega ID (clientes viejos) se hace fallback por el nombre anterior.
+ * El historial de asistencias ya guardado NO se modifica: los registros
+ * viejos que tengan JugadorID siguen apuntando al mismo jugador aunque
+ * cambie de nombre; los registros muy viejos sin JugadorID se resuelven
+ * en el cliente vía el mapa de alias por nombre.
  */
-function renamePlayer(oldName, newName) {
+function renamePlayer(id, newName, oldName) {
   try {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     const sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
@@ -336,8 +357,12 @@ function renamePlayer(oldName, newName) {
 
     const values = sheet.getDataRange().getValues();
     for (let i = 1; i < values.length; i++) {
-      const nombre = (values[i][0] || '').toString().trim();
-      if (nombre.toLowerCase() === (oldName || '').toString().trim().toLowerCase()) {
+      const rowId = (values[i][2] || '').toString().trim();
+      const rowNombre = (values[i][0] || '').toString().trim();
+      const matches = id
+        ? rowId === id.toString().trim()
+        : rowNombre.toLowerCase() === (oldName || '').toString().trim().toLowerCase();
+      if (matches) {
         sheet.getRange(i + 1, 1).setValue(newName.toString().trim());
         return { status: 'success', message: 'Nombre actualizado' };
       }
@@ -471,7 +496,8 @@ function getAllAttendanceData() {
                       : values[i][1].toString()) : '',
         jugador:     values[i][2] || '',
         estado:      values[i][3] || '',
-        observacion: values[i][4] || ''
+        observacion: values[i][4] || '',
+        jugadorId:   values[i][5] || ''
       });
     }
 
@@ -505,7 +531,7 @@ function initializeSheets() {
     if (!playersSheet) {
       // Only create if truly missing (no existing data to preserve)
       const newSheet = spreadsheet.insertSheet(PLAYERS_SHEET_NAME);
-      newSheet.appendRow(['Nombre']);
+      newSheet.appendRow(['Nombre', 'Activo', 'ID']);
     }
 
     Logger.log('Sheets initialized successfully');

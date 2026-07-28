@@ -267,7 +267,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.5.0 · Corte Clausura: 1 Jul 2026</p>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.6.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -289,7 +289,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.5.0';
+const APP_VERSION='1.6.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -309,11 +309,19 @@ const ALIASES={
 const APP_MODE=new URLSearchParams(window.location.search).get('mode')||'';
 
 // ======================== STATE ========================
+// players: array de {id, nombre}. El id es estable y no cambia si se renombra
+// al jugador — es lo que vincula cada registro de asistencia a la persona real.
 let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
-players.sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
+// Migración defensiva: si quedó guardado el formato viejo (array de strings),
+// los envolvemos como objetos sin id — se corrige solo en el próximo fetch exitoso.
+if(players.length&&typeof players[0]==='string'){
+  players=players.map(nombre=>({id:null,nombre}));
+}
+sortPlayers();
+// inactiveSet ahora guarda IDs de jugador (antes guardaba nombres en mayúsculas)
 let inactiveSet=new Set(JSON.parse(localStorage.getItem('club_inactive_players')||'[]'));
-// Alias dinámicos: nombre viejo (mayúsculas) -> nombre nuevo (mayúsculas), generados al renombrar un jugador
-// para que los registros históricos guardados con el nombre viejo se sigan agrupando correctamente.
+// Alias dinámicos: nombre viejo (mayúsculas) -> nombre nuevo (mayúsculas), generados al renombrar un jugador.
+// Solo hace falta para registros de asistencia MUY viejos que no tienen JugadorID guardado.
 let dynamicAliases=JSON.parse(localStorage.getItem('club_name_aliases')||'{}');
 let scriptUrl=localStorage.getItem('club_script_url')||DEFAULT_SCRIPT_URL;
 let defaultStatus=localStorage.getItem('club_default_status')||'A';
@@ -348,9 +356,9 @@ document.addEventListener('DOMContentLoaded',async()=>{
       const j=await r.json();
       if(j.status==='success'&&j.players&&j.players.length>0){
         // Sheets es la fuente de verdad: reemplazar lista local
-        players=j.players.map(p=>p.nombre);
+        players=j.players.map(p=>({id:p.id,nombre:p.nombre}));
         sortPlayers();
-        inactiveSet=new Set(j.players.filter(p=>p.activo===false).map(p=>p.nombre.toUpperCase()));
+        inactiveSet=new Set(j.players.filter(p=>p.activo===false).map(p=>p.id));
         savePlayers();
         saveInactiveSet();
         // Si ya hay fecha seleccionada, recargar el form con la nueva lista
@@ -563,11 +571,11 @@ function applyFormData(records){
   const ap=activePlayers();
   // Reset all to P first
   ap.forEach((_,i)=>setStatus(i,'P'));
-  // Build lookup map normalized name -> {estado, obs}
+  // Build lookup map: key resuelto (id de jugador, o nombre crudo si no se reconoce) -> {estado, obs}
   const map={};
-  records.forEach(r=>{map[norm(r.jugador)]={estado:r.estado,obs:r.observacion||''};});
+  records.forEach(r=>{map[resolvePlayerKey(r)]={estado:r.estado,obs:r.observacion||''};});
   ap.forEach((p,i)=>{
-    const d=map[norm(p)];
+    const d=map[p.id];
     if(d){
       setStatus(i,d.estado);
       if(d.estado==='J'&&d.obs){document.getElementById('obs-'+i).value=d.obs;}
@@ -584,7 +592,7 @@ function renderForm(){
     div.id='pc-'+i;
     div.innerHTML=`
       <div class="player-top">
-        <span class="name">${p}</span>
+        <span class="name">${p.nombre}</span>
         <div class="status-btns">
           <button class="sel-P" onclick="setStatus(${i},'P')">P</button>
           <button onclick="setStatus(${i},'E/A')">E/A</button>
@@ -614,7 +622,7 @@ function setStatus(idx,st){
 function getFormData(){
   const fecha=document.getElementById('att-date').value;
   if(!fecha)return null;
-  const ts=new Date().toISOString();
+  const ts=localTimestamp();
   const records=[];
   activePlayers().forEach((p,i)=>{
     const card=document.getElementById('pc-'+i);
@@ -628,7 +636,7 @@ function getFormData(){
       else st='P';
     }
     const obs=document.getElementById('obs-'+i).value.trim();
-    records.push({timestamp:ts,fecha,jugador:p,estado:st,observacion:obs});
+    records.push({timestamp:ts,fecha,jugador:p.nombre,jugadorId:p.id,estado:st,observacion:obs});
   });
   return {fecha,timestamp:ts,records};
 }
@@ -737,11 +745,12 @@ async function loadReports(){
       const byDate={};
       j.data.forEach(rec=>{
         if(!rec.fecha)return;
+        const key=resolvePlayerKey(rec);
         if(!byDate[rec.fecha])byDate[rec.fecha]={};
-        byDate[rec.fecha][norm(rec.jugador)]=rec.estado;
+        byDate[rec.fecha][key]=rec.estado;
         if(rec.estado==='J'&&rec.observacion){
           if(!allObs[rec.fecha])allObs[rec.fecha]={};
-          allObs[rec.fecha][norm(rec.jugador)]=rec.observacion;
+          allObs[rec.fecha][key]=rec.observacion;
         }
       });
       for(const[date,pmap]of Object.entries(byDate)){
@@ -756,9 +765,9 @@ async function loadReports(){
     psel.innerHTML='';
     const allP=new Set();
     rawAllDays.forEach(d=>Object.keys(d.players).forEach(p=>allP.add(p)));
-    activePlayers().forEach(p=>allP.add(norm(p)));
-    [...allP].filter(p=>!inactiveSet.has(p)).sort().forEach(p=>{
-      const o=document.createElement('option');o.value=p;o.textContent=displayName(p);psel.appendChild(o);
+    activePlayers().forEach(p=>allP.add(p.id));
+    [...allP].filter(k=>!inactiveSet.has(k)).sort((a,b)=>displayName(a).localeCompare(displayName(b),'es',{sensitivity:'base'})).forEach(k=>{
+      const o=document.createElement('option');o.value=k;o.textContent=displayName(k);psel.appendChild(o);
     });
 
     applyTorneoFilter();
@@ -835,7 +844,7 @@ function renderWeekly(){
 
   const displayDays=semanalShowAll?getWeekDays(curWeek):practiceDays;
 
-  const allP=[...new Set([...activePlayers().map(p=>norm(p)),...weekData.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
+  const allP=[...new Set([...activePlayers().map(p=>p.id),...weekData.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
   const att={};
   allP.forEach(p=>{att[p]=0;});
   weekData.forEach(d=>{
@@ -918,7 +927,7 @@ function renderTotales(){
   const total=allDays.length;
   if(!total){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos disponibles.</div>';return;}
 
-  const allP=[...new Set([...activePlayers().map(p=>norm(p)),...allDays.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
+  const allP=[...new Set([...activePlayers().map(p=>p.id),...allDays.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
   const att={};
   allP.forEach(p=>{att[p]=0;});
   allDays.forEach(d=>{
@@ -974,7 +983,7 @@ function renderMonthly(){
   if(!data.length){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos para este mes.</div>';return;}
 
   const total=data.length;
-  const allP=[...new Set([...activePlayers().map(p=>norm(p)),...data.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p)).sort();
+  const allP=[...new Set([...activePlayers().map(p=>p.id),...data.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
 
   // By week
   const weeks={};
@@ -1072,7 +1081,7 @@ function renderPlayer(){
 }
 
 // ======================== PLAYERS MGMT ========================
-let editingPlayer=null; // nombre del jugador que se está renombrando ahora mismo (o null)
+let editingPlayer=null; // id del jugador que se está renombrando ahora mismo (o null)
 
 function renderMgmt(){
   const c=document.getElementById('mgmt-list');
@@ -1082,27 +1091,27 @@ function renderMgmt(){
     const d=document.createElement('div');
     d.className='mgmt-item'+(active?'':' mgmt-item-inactive');
     if(!active)d.style.opacity='.55';
-    const safe=p.replace(/'/g,"\\'");
+    const idAttr=(p.id||'').replace(/'/g,"\\'");
 
-    if(editingPlayer===p){
+    if(editingPlayer===p.id){
       d.style.opacity='1';
-      d.innerHTML=`<input type="text" id="rename-input" value="${p.replace(/"/g,'&quot;')}" style="flex:1;padding:8px 10px;border:2px solid var(--primary);border-radius:8px;font-size:.9rem;font-family:inherit;margin-right:8px">
-        <button class="btn-sm" style="background:var(--green);color:#fff;min-height:32px;padding:5px 10px" onclick="confirmRename('${safe}')">✓</button>
+      d.innerHTML=`<input type="text" id="rename-input" value="${p.nombre.replace(/"/g,'&quot;')}" style="flex:1;padding:8px 10px;border:2px solid var(--primary);border-radius:8px;font-size:.9rem;font-family:inherit;margin-right:8px">
+        <button class="btn-sm" style="background:var(--green);color:#fff;min-height:32px;padding:5px 10px" onclick="confirmRename('${idAttr}')">✓</button>
         <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 10px;margin-left:4px" onclick="cancelRename()">✕</button>`;
       c.appendChild(d);
       return;
     }
 
-    d.innerHTML=`<span style="flex:1">${p}</span>
-      <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 8px;margin-right:6px" title="Editar nombre" onclick="startRename('${safe}')">✏️</button>
+    d.innerHTML=`<span style="flex:1">${p.nombre}</span>
+      <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 8px;margin-right:6px" title="Editar nombre" onclick="startRename('${idAttr}')">✏️</button>
       <button class="btn-sm" style="background:${active?'var(--green-bg)':'var(--gray-light)'};color:${active?'var(--green-text)':'var(--gray)'};min-height:32px;padding:5px 12px"
-        onclick="togglePlayerActivo('${safe}')">${active?'✓ Activo':'Inactivo'}</button>`;
+        onclick="togglePlayerActivo('${idAttr}')">${active?'✓ Activo':'Inactivo'}</button>`;
     c.appendChild(d);
   });
 }
 
-function startRename(name){
-  editingPlayer=name;
+function startRename(id){
+  editingPlayer=id;
   renderMgmt();
   const inp=document.getElementById('rename-input');
   if(inp){inp.focus();inp.select();}
@@ -1113,26 +1122,21 @@ function cancelRename(){
   renderMgmt();
 }
 
-async function confirmRename(oldName){
+async function confirmRename(id){
   const inp=document.getElementById('rename-input');
   const newName=(inp?inp.value:'').trim();
+  const player=players.find(p=>p.id===id);
+  if(!player){toast('Jugador no encontrado','error');return;}
+  const oldName=player.nombre;
   if(!newName){toast('El nombre no puede estar vacío','error');return;}
   if(newName===oldName){cancelRename();return;}
-  if(players.find(p=>p.toLowerCase()===newName.toLowerCase()&&p.toLowerCase()!==oldName.toLowerCase())){
+  if(players.find(p=>p.id!==id&&p.nombre.toLowerCase()===newName.toLowerCase())){
     toast('Ya existe un jugador con ese nombre','error');return;
   }
 
-  const idx=players.findIndex(p=>p===oldName);
-  if(idx===-1){toast('Jugador no encontrado','error');return;}
-
-  // Actualizar estado local: nombre, activo, y alias para el historial viejo
-  players[idx]=newName;
+  // Actualizar estado local: nombre y alias para el historial muy viejo sin JugadorID
+  player.nombre=newName;
   sortPlayers();
-  if(inactiveSet.has(oldName.toUpperCase())){
-    inactiveSet.delete(oldName.toUpperCase());
-    inactiveSet.add(newName.toUpperCase());
-    saveInactiveSet();
-  }
   dynamicAliases[oldName.toUpperCase()]=newName.toUpperCase();
   saveAliases();
   savePlayers();
@@ -1151,7 +1155,7 @@ async function confirmRename(oldName){
     await fetch(scriptUrl,{
       method:'POST',mode:'no-cors',
       headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'renamePlayer',oldName,newName})
+      body:JSON.stringify({action:'renamePlayer',id,newName,oldName})
     });
     toast('Nombre actualizado','success');
   }catch(e){
@@ -1163,20 +1167,23 @@ async function addPlayer(){
   const inp=document.getElementById('new-name');
   const name=inp.value.trim();
   if(!name){toast('Ingresá un nombre','error');return;}
-  if(players.find(p=>p.toLowerCase()===name.toLowerCase())){toast('Ya existe','error');return;}
+  if(players.find(p=>p.nombre.toLowerCase()===name.toLowerCase())){toast('Ya existe','error');return;}
   if(!scriptUrl){toast('Configurá la URL del Apps Script primero','error');return;}
 
   const btn=document.querySelector('.add-row button');
   btn.disabled=true;btn.textContent='...';
+  // El id lo genera el cliente: el guardado usa no-cors y no podemos leer
+  // la respuesta del servidor para recibir un id generado allá.
+  const id=genId();
   try{
     // Intentar agregar en Sheets primero
     await fetch(scriptUrl,{
       method:'POST',mode:'no-cors',
       headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'addPlayer',name})
+      body:JSON.stringify({action:'addPlayer',name,id})
     });
     // Agregar localmente y actualizar UI
-    players.push(name);sortPlayers();savePlayers();
+    players.push({id,nombre:name});sortPlayers();savePlayers();
     inp.value='';
     renderForm();renderMgmt();
     toast('Jugador agregado en Sheets','success');
@@ -1188,17 +1195,22 @@ async function addPlayer(){
 }
 
 
-function sortPlayers(){players.sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));}
+function genId(){
+  if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
+  return 'id-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
+}
+function sortPlayers(){players.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));}
 function savePlayers(){localStorage.setItem('club_players',JSON.stringify(players));}
 function saveInactiveSet(){localStorage.setItem('club_inactive_players',JSON.stringify([...inactiveSet]));}
 function saveAliases(){localStorage.setItem('club_name_aliases',JSON.stringify(dynamicAliases));}
-function isActive(name){return !inactiveSet.has((name||'').toUpperCase());}
+function isActive(player){return !inactiveSet.has(player.id);}
 function activePlayers(){return players.filter(isActive);}
 
-async function togglePlayerActivo(name){
-  const nowActive=!isActive(name); // estado al que va a pasar
-  const key=name.toUpperCase();
-  if(nowActive)inactiveSet.delete(key);else inactiveSet.add(key);
+async function togglePlayerActivo(id){
+  const player=players.find(p=>p.id===id);
+  if(!player){toast('Jugador no encontrado','error');return;}
+  const nowActive=!isActive(player); // estado al que va a pasar
+  if(nowActive)inactiveSet.delete(id);else inactiveSet.add(id);
   saveInactiveSet();
   renderMgmt();
   // Si el form de asistencia está abierto, refrescar la lista de jugadores activos
@@ -1211,7 +1223,7 @@ async function togglePlayerActivo(name){
     await fetch(scriptUrl,{
       method:'POST',mode:'no-cors',
       headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'setPlayerActivo',name,activo:nowActive})
+      body:JSON.stringify({action:'setPlayerActivo',id,activo:nowActive,name:player.nombre})
     });
     toast(nowActive?'Jugador activado':'Jugador desactivado','success');
   }catch(e){
@@ -1253,7 +1265,10 @@ function sendNotification(title,body){
 }
 
 // ======================== HELPERS ========================
-function norm(n){
+// Resolver de nombre "a la vieja usanza" (alias + fuzzy match contra la lista
+// actual de jugadores). Solo se usa como fallback para registros de asistencia
+// que no tienen JugadorID guardado (de antes de este cambio).
+function normName(n){
   if(!n)return'';
   let s=n.trim().replace(/["'\u201C\u201D\u2018\u2019]/g,'').replace(/\s+/g,' ').toUpperCase();
   // Resolver alias (incluye renombres hechos desde la app). Con protecci\u00F3n
@@ -1265,16 +1280,35 @@ function norm(n){
   }
   // Check against dynamic players list first (from Jugadores sheet)
   for(const p of players){
-    if(s===p.toUpperCase())return p.toUpperCase();
-    const pts=p.toUpperCase().split(' ');
-    if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.toUpperCase();
+    if(s===p.nombre.toUpperCase())return p.nombre.toUpperCase();
+    const pts=p.nombre.toUpperCase().split(' ');
+    if(pts.length>=2&&s.includes(pts[0])&&s.includes(pts[1]))return p.nombre.toUpperCase();
   }
   return s;
 }
 
-function displayName(n){
-  for(const p of players){if(p.toUpperCase()===n)return p;}
-  return n.split(' ').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
+// Resuelve un registro de asistencia (tal como viene de la planilla) a una key
+// estable: el ID del jugador actual si se puede reconocer, o 'NAME:xxx' como
+// fallback para registros viejos sin JugadorID que no matchean a nadie actual.
+function resolvePlayerKey(record){
+  if(record.jugadorId){
+    const p=players.find(pl=>pl.id===record.jugadorId);
+    if(p)return p.id;
+  }
+  const canonical=normName(record.jugador);
+  const p2=players.find(pl=>pl.nombre.toUpperCase()===canonical);
+  if(p2)return p2.id;
+  return 'NAME:'+canonical;
+}
+
+// Convierte una key (id de jugador, o 'NAME:xxx' de fallback) en el nombre a mostrar.
+function displayName(key){
+  if(typeof key==='string'&&key.indexOf('NAME:')===0){
+    const raw=key.slice(5);
+    return raw.split(' ').map(w=>w.charAt(0)+w.slice(1).toLowerCase()).join(' ');
+  }
+  const p=players.find(pl=>pl.id===key);
+  return p?p.nombre:key;
 }
 
 function weekKey(ds){
@@ -1286,6 +1320,15 @@ function weekKey(ds){
 function formatDateShort(ds){const d=new Date(ds+'T12:00:00');return DIAS_C[d.getDay()]+' '+d.getDate().toString().padStart(2,'0');}
 function formatChipLabel(ds){const d=new Date(ds+'T12:00:00');return DIAS_C[d.getDay()]+' '+d.getDate()+' '+MESES[d.getMonth()].substring(0,3);}
 function formatDateLong(ds){const d=new Date(ds+'T12:00:00');return DIAS_L[d.getDay()]+' '+d.getDate()+' '+MESES[d.getMonth()];}
+// Timestamp con la hora local del dispositivo (no UTC), para que la columna
+// Timestamp de Asistencias_App refleje la hora real de carga en Argentina.
+function localTimestamp(){
+  const d=new Date();
+  const pad=(n)=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'
+    +pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())
+    +'.'+String(d.getMilliseconds()).padStart(3,'0');
+}
 function formatWeek(wk){const d=new Date(wk+'T12:00:00');const e=new Date(d);e.setDate(e.getDate()+6);return`${d.getDate()} ${MESES[d.getMonth()].substring(0,3)} - ${e.getDate()} ${MESES[e.getMonth()].substring(0,3)}`;}
 function formatMonth(mk){const[y,m]=mk.split('-');return MESES[+m-1]+' '+y;}
 function pctColor(p){return p>=75?'var(--green)':p>=50?'var(--yellow)':'var(--red)';}
