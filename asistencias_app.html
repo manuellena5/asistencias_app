@@ -67,6 +67,13 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 .toast.error{background:var(--red)}
 @keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:300;align-items:center;justify-content:center;padding:20px}
+.modal-box{background:#fff;border-radius:16px;max-width:380px;width:100%;padding:24px 20px;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.25);animation:modalIn .2s ease}
+.modal-box .m-ico{font-size:2.4rem;margin-bottom:8px}
+.modal-box .m-title{font-size:1.1rem;font-weight:700;margin-bottom:8px;color:#1f2937}
+.modal-box .m-msg{font-size:.9rem;color:var(--gray);line-height:1.4}
+@keyframes modalIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+
 /* Reports */
 .report-tabs{display:flex;gap:4px;margin-bottom:12px;background:#fff;border-radius:var(--radius);padding:4px;box-shadow:var(--shadow)}
 .report-tabs button{flex:1;padding:10px 8px;border:none;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer;background:transparent;color:var(--gray);transition:all .2s;min-height:44px}
@@ -260,7 +267,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.4.0 · Corte Clausura: 1 Jul 2026</p>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.5.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -271,9 +278,18 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
   <button onclick="go('config',this)"><span class="ico">⚙️</span>Config</button>
 </div>
 
+<div id="save-modal-overlay" class="modal-overlay">
+  <div class="modal-box">
+    <div class="m-ico" id="save-modal-icon">✅</div>
+    <div class="m-title" id="save-modal-title">Asistencia guardada</div>
+    <div class="m-msg" id="save-modal-msg"></div>
+    <div id="save-modal-actions"></div>
+  </div>
+</div>
+
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.4.0';
+const APP_VERSION='1.5.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -638,15 +654,50 @@ async function saveAttendance(){
       });
     }
 
-    toast('✓ Asistencia guardada','success');
-    // Ir a Reportes y limpiar el formulario
-    const navBtn=document.querySelector('.nav button:nth-child(2)');
-    go('reports',navBtn);
+    // Refrescar cache y "últimos días cargados" con lo recién guardado,
+    // para que la pantalla principal no siga mostrando la fecha como "sin datos"
+    cachedDateData[data.fecha]=data.records;
+    loadedDates.add(data.fecha);
+    renderDatesStrip();
+    renderStatusCard('banner-loaded',data.fecha);
+    fetchLoadedDates(); // en background, para confirmar contra el servidor
+
+    showSaveModal(true,data.fecha,data.records.length);
   }catch(e){
-    toast('Error: '+e.message,'error');
+    showSaveModal(false,data.fecha,0,e.message);
   }finally{
     btn.disabled=false;btn.textContent='Guardar Asistencia';
   }
+}
+
+// ======================== MODAL DE CONFIRMACIÓN ========================
+function showSaveModal(ok,fecha,count,errMsg){
+  const overlay=document.getElementById('save-modal-overlay');
+  const icon=document.getElementById('save-modal-icon');
+  const title=document.getElementById('save-modal-title');
+  const msg=document.getElementById('save-modal-msg');
+  const actions=document.getElementById('save-modal-actions');
+
+  if(ok){
+    icon.textContent='✅';
+    title.textContent='Asistencia guardada';
+    msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)}.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();const b=document.querySelector('.nav button:nth-child(2)');go('reports',b);">Ver reportes</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
+  } else {
+    icon.textContent='⚠️';
+    title.textContent='No se pudo guardar';
+    msg.textContent=`Hubo un problema guardando la asistencia del ${formatDateLong(fecha)}${errMsg?': '+errMsg:''}. Los datos quedaron guardados en este dispositivo, pero revisá tu conexión y volvé a intentar para que se sincronicen con la planilla.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();saveAttendance();">Reintentar</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
+  }
+  overlay.style.display='flex';
+}
+
+function closeSaveModal(){
+  document.getElementById('save-modal-overlay').style.display='none';
 }
 
 // ======================== REPORTS ========================
