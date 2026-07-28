@@ -74,6 +74,8 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 .modal-box .m-msg{font-size:.9rem;color:var(--gray);line-height:1.4}
 @keyframes modalIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
 
+.pending-banner{display:none;align-items:center;justify-content:space-between;gap:10px;background:var(--yellow-bg);color:var(--yellow-text);border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;font-size:.82rem;font-weight:600;margin-bottom:12px}
+
 /* Reports */
 .report-tabs{display:flex;gap:4px;margin-bottom:12px;background:#fff;border-radius:var(--radius);padding:4px;box-shadow:var(--shadow)}
 .report-tabs button{flex:1;padding:10px 8px;border:none;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer;background:transparent;color:var(--gray);transition:all .2s;min-height:44px}
@@ -180,6 +182,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 <div class="main">
   <!-- ===== FORM ===== -->
   <div id="scr-form" class="screen active">
+    <div class="pending-banner" style="display:none"></div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <input type="date" id="att-date" class="date-input" style="margin-bottom:0" onchange="onDateChange(this.value)">
       <button class="btn-sm btn-sec" style="min-height:48px;flex-shrink:0" onclick="setToday()">Hoy</button>
@@ -267,7 +270,15 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.7.0 · Corte Clausura: 1 Jul 2026</p>
+    <div class="card" style="margin-top:12px">
+      <div class="card-hdr">📶 Sincronización</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">La app funciona sin conexión: lo que cargues se guarda en el dispositivo y se sube solo a la planilla apenas haya internet.</p>
+        <div class="pending-banner" style="display:none;margin-bottom:0"></div>
+        <p style="font-size:.8rem;color:var(--gray);display:none" id="no-pending-msg">✓ No hay cambios pendientes de sincronizar.</p>
+      </div>
+    </div>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.8.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -289,7 +300,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.7.0';
+const APP_VERSION='1.8.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -337,6 +348,9 @@ let weekIdx=0;
 let semanalShowAll=false;
 let semanalSortBy='pct';
 let totalesAsc=false;
+// Cola de cambios que no se pudieron mandar al Apps Script (sin conexión).
+// Se reintentan solos cuando vuelve la conexión, al abrir la app, y cada 60s.
+let pendingQueue=JSON.parse(localStorage.getItem('club_pending_queue')||'[]');
 
 // ======================== INIT ========================
 document.addEventListener('DOMContentLoaded',async()=>{
@@ -380,6 +394,8 @@ document.addEventListener('DOMContentLoaded',async()=>{
 
   renderMgmt();
   fetchLoadedDates(); // en background, solo para los chips
+  renderPendingBanner();
+  trySyncPending(true); // por si quedó algo pendiente de una sesión sin conexión
   // Mostrar estado inicial
   showEmptyState();
   requestNotificationPermission();
@@ -699,18 +715,10 @@ async function saveAttendance(){
   btn.disabled=true;btn.textContent='Guardando...';
 
   try{
-    // Save to localStorage
+    // Guardar siempre en este dispositivo primero: esto es lo que permite
+    // que la app funcione sin conexión.
     const key='att_'+data.fecha;
     localStorage.setItem(key,JSON.stringify(data.records));
-
-    // Save to Apps Script (overwrite: true deletes existing rows for this date first)
-    if(scriptUrl){
-      await fetch(scriptUrl,{
-        method:'POST',mode:'no-cors',
-        headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'saveAttendance',data:data.records,overwrite:true})
-      });
-    }
 
     // Refrescar cache y "últimos días cargados" con lo recién guardado,
     // para que la pantalla principal no siga mostrando la fecha como "sin datos"
@@ -718,35 +726,57 @@ async function saveAttendance(){
     loadedDates.add(data.fecha);
     renderDatesStrip();
     renderStatusCard('banner-loaded',data.fecha);
-    fetchLoadedDates(); // en background, para confirmar contra el servidor
 
-    showSaveModal(true,data.fecha,data.records.length);
+    if(!scriptUrl){
+      showSaveModal('ok',data.fecha,data.records.length);
+      return;
+    }
+
+    try{
+      await postToScript('saveAttendance',{data:data.records,overwrite:true});
+      // Si había una versión vieja de esta fecha en la cola (guardada offline), ya no hace falta
+      pendingQueue=pendingQueue.filter(p=>!(p.action==='saveAttendance'&&p.dedupeKey===data.fecha));
+      savePendingQueue();
+      renderPendingBanner();
+      fetchLoadedDates(); // en background, para confirmar contra el servidor
+      showSaveModal('ok',data.fecha,data.records.length);
+    }catch(netErr){
+      // Sin conexión: ya quedó guardado en el dispositivo, lo encolamos para subirlo solo después
+      queuePendingAction('saveAttendance',{data:data.records,overwrite:true},data.fecha,'Asistencia del '+formatDateLong(data.fecha));
+      showSaveModal('offline',data.fecha,data.records.length);
+    }
   }catch(e){
-    showSaveModal(false,data.fecha,0,e.message);
+    showSaveModal('error',data.fecha,0,e.message);
   }finally{
     btn.disabled=false;btn.textContent='Guardar Asistencia';
   }
 }
 
 // ======================== MODAL DE CONFIRMACIÓN ========================
-function showSaveModal(ok,fecha,count,errMsg){
+function showSaveModal(status,fecha,count,errMsg){
   const overlay=document.getElementById('save-modal-overlay');
   const icon=document.getElementById('save-modal-icon');
   const title=document.getElementById('save-modal-title');
   const msg=document.getElementById('save-modal-msg');
   const actions=document.getElementById('save-modal-actions');
 
-  if(ok){
+  if(status==='ok'){
     icon.textContent='✅';
     title.textContent='Asistencia guardada';
-    msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)}.`;
+    msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)} y ya se sincronizaron con la planilla.`;
     actions.innerHTML=`
       <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();const b=document.querySelector('.nav button:nth-child(2)');go('reports',b);">Ver reportes</button>
       <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
+  } else if(status==='offline'){
+    icon.textContent='💾';
+    title.textContent='Guardado en el dispositivo';
+    msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)} en este dispositivo. No hay conexión ahora — se van a subir solos a la planilla apenas vuelva internet.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal()">Entendido</button>`;
   } else {
     icon.textContent='⚠️';
     title.textContent='No se pudo guardar';
-    msg.textContent=`Hubo un problema guardando la asistencia del ${formatDateLong(fecha)}${errMsg?': '+errMsg:''}. Los datos quedaron guardados en este dispositivo, pero revisá tu conexión y volvé a intentar para que se sincronicen con la planilla.`;
+    msg.textContent=`Hubo un problema guardando la asistencia del ${formatDateLong(fecha)}${errMsg?': '+errMsg:''}.`;
     actions.innerHTML=`
       <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();saveAttendance();">Reintentar</button>
       <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
@@ -757,6 +787,68 @@ function showSaveModal(ok,fecha,count,errMsg){
 function closeSaveModal(){
   document.getElementById('save-modal-overlay').style.display='none';
 }
+
+// ======================== SINCRONIZACIÓN OFFLINE ========================
+// POST genérico al Apps Script. Con mode:'no-cors' no podemos leer la
+// respuesta, pero si el fetch tira una excepción es una señal confiable de
+// que no hay conexión (o no llegó a la red), que es justo lo que necesitamos
+// para decidir si encolar el cambio o no.
+async function postToScript(action,payload){
+  await fetch(scriptUrl,{
+    method:'POST',mode:'no-cors',
+    headers:{'Content-Type':'text/plain'},
+    body:JSON.stringify({action,...payload})
+  });
+}
+
+function savePendingQueue(){localStorage.setItem('club_pending_queue',JSON.stringify(pendingQueue));}
+
+// Guarda (o reemplaza, si ya había uno igual) un cambio pendiente de subir.
+// dedupeKey identifica "lo mismo" para no acumular versiones viejas del mismo
+// cambio (ej. tildar y destildar Activo varias veces offline sobre el mismo jugador).
+function queuePendingAction(action,payload,dedupeKey,label){
+  pendingQueue=pendingQueue.filter(it=>!(it.action===action&&it.dedupeKey===dedupeKey));
+  pendingQueue.push({id:genId(),action,payload,dedupeKey,label,ts:Date.now()});
+  savePendingQueue();
+  renderPendingBanner();
+}
+
+function renderPendingBanner(){
+  document.querySelectorAll('.pending-banner').forEach(el=>{
+    if(!pendingQueue.length){el.style.display='none';el.innerHTML='';return;}
+    el.style.display='flex';
+    el.innerHTML=`<span>🔄 ${pendingQueue.length} cambio${pendingQueue.length!==1?'s':''} sin sincronizar</span>
+      <button class="btn-sm" style="background:var(--yellow);color:#fff;min-height:28px;padding:4px 10px;flex-shrink:0" onclick="trySyncPending(false)">Sincronizar</button>`;
+  });
+  const noPending=document.getElementById('no-pending-msg');
+  if(noPending)noPending.style.display=pendingQueue.length?'none':'block';
+}
+
+let syncingPending=false;
+async function trySyncPending(silent){
+  if(syncingPending||!pendingQueue.length||!scriptUrl)return;
+  syncingPending=true;
+  let synced=0;
+  const toTry=[...pendingQueue];
+  for(const item of toTry){
+    try{
+      await postToScript(item.action,item.payload);
+      pendingQueue=pendingQueue.filter(p=>p.id!==item.id);
+      synced++;
+    }catch(e){
+      // Sigue sin conexión (u otro error de red): lo dejamos en cola para el próximo intento
+    }
+  }
+  savePendingQueue();
+  renderPendingBanner();
+  syncingPending=false;
+  if(synced&&!silent){
+    toast(`✓ Se sincronizaron ${synced} cambio${synced!==1?'s':''} pendiente${synced!==1?'s':''}`,'success');
+  }
+}
+
+window.addEventListener('online',()=>trySyncPending(false));
+setInterval(()=>trySyncPending(true),60000);
 
 // ======================== REPORTS ========================
 function setReport(view,btn){
@@ -1202,14 +1294,13 @@ async function confirmRename(id){
 
   if(!scriptUrl){toast('Nombre actualizado (local)','success');return;}
   try{
-    await fetch(scriptUrl,{
-      method:'POST',mode:'no-cors',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'renamePlayer',id,newName,oldName})
-    });
+    await postToScript('renamePlayer',{id,newName,oldName});
+    pendingQueue=pendingQueue.filter(p=>!(p.action==='renamePlayer'&&p.dedupeKey===id));
+    savePendingQueue();renderPendingBanner();
     toast('Nombre actualizado','success');
   }catch(e){
-    toast('Error al guardar el nombre nuevo: '+e.message,'error');
+    queuePendingAction('renamePlayer',{id,newName,oldName},id,'Rename: '+oldName+' → '+newName);
+    toast('Nombre actualizado (se sincronizará cuando haya conexión)','success');
   }
 }
 
@@ -1225,20 +1316,18 @@ async function addPlayer(){
   // El id lo genera el cliente: el guardado usa no-cors y no podemos leer
   // la respuesta del servidor para recibir un id generado allá.
   const id=genId();
+  // Agregar localmente primero — así funciona aunque no haya conexión
+  players.push({id,nombre:name});sortPlayers();savePlayers();
+  inp.value='';
+  renderForm();renderMgmt();
   try{
-    // Intentar agregar en Sheets primero
-    await fetch(scriptUrl,{
-      method:'POST',mode:'no-cors',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'addPlayer',name,id})
-    });
-    // Agregar localmente y actualizar UI
-    players.push({id,nombre:name});sortPlayers();savePlayers();
-    inp.value='';
-    renderForm();renderMgmt();
+    await postToScript('addPlayer',{name,id});
+    pendingQueue=pendingQueue.filter(p=>!(p.action==='addPlayer'&&p.dedupeKey===id));
+    savePendingQueue();renderPendingBanner();
     toast('Jugador agregado en Sheets','success');
   }catch(e){
-    toast('Error al guardar en Sheets: '+e.message,'error');
+    queuePendingAction('addPlayer',{name,id},id,'Nuevo jugador: '+name);
+    toast('Jugador agregado (se sincronizará cuando haya conexión)','success');
   }finally{
     btn.disabled=false;btn.textContent='+';
   }
@@ -1270,14 +1359,13 @@ async function togglePlayerActivo(id){
   }
   if(!scriptUrl)return;
   try{
-    await fetch(scriptUrl,{
-      method:'POST',mode:'no-cors',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'setPlayerActivo',id,activo:nowActive,name:player.nombre})
-    });
+    await postToScript('setPlayerActivo',{id,activo:nowActive,name:player.nombre});
+    pendingQueue=pendingQueue.filter(p=>!(p.action==='setPlayerActivo'&&p.dedupeKey===id));
+    savePendingQueue();renderPendingBanner();
     toast(nowActive?'Jugador activado':'Jugador desactivado','success');
   }catch(e){
-    toast('Error al guardar el estado: '+e.message,'error');
+    queuePendingAction('setPlayerActivo',{id,activo:nowActive,name:player.nombre},id,'Estado de '+player.nombre);
+    toast((nowActive?'Jugador activado':'Jugador desactivado')+' (se sincronizará cuando haya conexión)','success');
   }
 }
 function saveCfg(){
