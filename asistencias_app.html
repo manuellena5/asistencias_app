@@ -267,7 +267,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.6.0 · Corte Clausura: 1 Jul 2026</p>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.7.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -289,7 +289,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.6.0';
+const APP_VERSION='1.7.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -340,7 +340,9 @@ let totalesAsc=false;
 
 // ======================== INIT ========================
 document.addEventListener('DOMContentLoaded',async()=>{
-  document.getElementById('att-date').value=new Date().toISOString().split('T')[0];
+  // La fecha arranca vacía a propósito: no queremos abrir ninguna asistencia
+  // sola sin que el usuario elija explícitamente una fecha (o toque el acceso
+  // rápido "Cargar las asistencias de hoy").
   document.getElementById('cfg-url').value=scriptUrl;
   // Aplicar estado por defecto guardado en el radio
   document.querySelectorAll('input[name="default-status"]').forEach(r=>{
@@ -361,9 +363,6 @@ document.addEventListener('DOMContentLoaded',async()=>{
         inactiveSet=new Set(j.players.filter(p=>p.activo===false).map(p=>p.id));
         savePlayers();
         saveInactiveSet();
-        // Si ya hay fecha seleccionada, recargar el form con la nueva lista
-        const fechaSel=document.getElementById('att-date').value;
-        if(fechaSel) loadDateData(fechaSel);
       } else if(!players.length){
         toast('La hoja Jugadores está vacía','error');
       }
@@ -382,7 +381,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   renderMgmt();
   fetchLoadedDates(); // en background, solo para los chips
   // Mostrar estado inicial
-  renderStatusCard('empty');
+  showEmptyState();
   requestNotificationPermission();
 
   // Aplicar modo según parámetro ?mode= de la URL
@@ -418,13 +417,64 @@ function go(screen,btn){
 function clearForm(){
   document.getElementById('att-date').value='';
   document.getElementById('form-body').style.display='none';
-  renderStatusCard('empty');
+  showEmptyState();
 }
 
+function todayStr(){return new Date().toISOString().split('T')[0];}
+
 function setToday(){
-  const d=new Date().toISOString().split('T')[0];
+  const d=todayStr();
   document.getElementById('att-date').value=d;
   onDateChange(d);
+}
+
+// Estado vacío (sin fecha elegida) + acceso rápido a la asistencia de hoy
+function showEmptyState(){
+  renderStatusCard('empty');
+  renderTodayQuickAccess();
+}
+
+async function renderTodayQuickAccess(){
+  const container=document.getElementById('today-quick');
+  if(!container)return;
+  const fecha=todayStr();
+
+  let records=null;
+  if(cachedDateData.hasOwnProperty(fecha)){
+    records=cachedDateData[fecha];
+  } else if(scriptUrl){
+    try{
+      const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
+      const j=await r.json();
+      records=(j.status==='success'&&j.data)?j.data:[];
+    }catch(e){
+      const stored=localStorage.getItem('att_'+fecha);
+      records=stored?(JSON.parse(stored)||[]):[];
+    }
+    cachedDateData[fecha]=records;
+  } else {
+    const stored=localStorage.getItem('att_'+fecha);
+    records=stored?(JSON.parse(stored)||[]):[];
+    cachedDateData[fecha]=records;
+  }
+
+  // Si mientras se hacía el fetch el usuario ya eligió otra fecha o cambió de pantalla, no pisar nada
+  const c2=document.getElementById('today-quick');
+  if(!c2)return;
+
+  const hasData=records&&records.length>0;
+  if(hasData){
+    c2.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600;margin-bottom:10px">✅ Ya hay datos cargados para hoy</div>
+      <button class="btn btn-primary" style="margin-top:0" onclick="openToday()">Ver / Editar asistencia de hoy</button>`;
+  } else {
+    c2.innerHTML=`<button class="btn btn-primary" style="margin-top:0" onclick="openToday()">📋 Cargar las asistencias de hoy</button>`;
+  }
+}
+
+function openToday(){
+  const fecha=todayStr();
+  document.getElementById('att-date').value=fecha;
+  loadDateData(fecha);
 }
 
 // ======================== FORM ========================
@@ -434,7 +484,7 @@ function renderStatusCard(state,fecha){
   if(state==='empty'){
     c.className='form-placeholder';
     c.style.padding='';
-    c.innerHTML='<div class="ico-big">📅</div><p>Elegí una fecha<br>para cargar la asistencia</p>';
+    c.innerHTML='<div class="ico-big">📅</div><p>Elegí una fecha<br>para cargar la asistencia</p><div id="today-quick" style="margin-top:16px"></div>';
   } else if(state==='checking'){
     c.className='card';
     c.style.padding='14px';
@@ -471,7 +521,7 @@ async function onDateChange(fecha){
   document.getElementById('form-body').style.display='none';
 
   if(!fecha){
-    renderStatusCard('empty');
+    showEmptyState();
     return;
   }
 
