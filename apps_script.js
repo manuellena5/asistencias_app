@@ -74,6 +74,9 @@ function doPost(e) {
       case 'setPlayerActivo':
         response = setPlayerActivo(data.name, data.activo);
         break;
+      case 'renamePlayer':
+        response = renamePlayer(data.oldName, data.newName);
+        break;
       default:
         response = { status: 'error', message: 'Unknown action' };
     }
@@ -303,6 +306,40 @@ function setPlayerActivo(name, activo) {
       if (nombre.toLowerCase() === (name || '').toString().trim().toLowerCase()) {
         sheet.getRange(i + 1, 7).setValue(activo ? '' : 'NO'); // columna G = Activo
         return { status: 'success', message: 'Estado actualizado' };
+      }
+    }
+    return { status: 'error', message: 'Jugador no encontrado' };
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Cambiar el nombre de un jugador (columna A de la hoja Jugadores).
+ * El historial de asistencias ya guardado con el nombre viejo NO se modifica;
+ * la app usa un mapa de alias en el cliente para seguir agrupando esos registros
+ * bajo el nombre nuevo.
+ */
+function renamePlayer(oldName, newName) {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
+    if (!sheet) {
+      return { status: 'error', message: 'Hoja Jugadores no encontrada' };
+    }
+    if (!newName || !newName.toString().trim()) {
+      return { status: 'error', message: 'Nombre nuevo vacío' };
+    }
+
+    const values = sheet.getDataRange().getValues();
+    for (let i = 1; i < values.length; i++) {
+      const nombre = (values[i][0] || '').toString().trim();
+      if (nombre.toLowerCase() === (oldName || '').toString().trim().toLowerCase()) {
+        sheet.getRange(i + 1, 1).setValue(newName.toString().trim());
+        return { status: 'success', message: 'Nombre actualizado' };
       }
     }
     return { status: 'error', message: 'Jugador no encontrado' };

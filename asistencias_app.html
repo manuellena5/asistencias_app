@@ -253,7 +253,14 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         </div>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px">v1.3.0 · Corte Clausura: 1 Jul 2026</p>
+    <div class="card" style="margin-top:12px">
+      <div class="card-hdr">🔄 Actualización</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">Si hiciste cambios y la app sigue mostrando la versión vieja, usá este botón para limpiar el caché y forzar la descarga de la última versión.</p>
+        <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
+      </div>
+    </div>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.4.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -266,7 +273,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.3.0';
+const APP_VERSION='1.4.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -287,7 +294,11 @@ const APP_MODE=new URLSearchParams(window.location.search).get('mode')||'';
 
 // ======================== STATE ========================
 let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
+players.sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
 let inactiveSet=new Set(JSON.parse(localStorage.getItem('club_inactive_players')||'[]'));
+// Alias dinámicos: nombre viejo (mayúsculas) -> nombre nuevo (mayúsculas), generados al renombrar un jugador
+// para que los registros históricos guardados con el nombre viejo se sigan agrupando correctamente.
+let dynamicAliases=JSON.parse(localStorage.getItem('club_name_aliases')||'{}');
 let scriptUrl=localStorage.getItem('club_script_url')||DEFAULT_SCRIPT_URL;
 let defaultStatus=localStorage.getItem('club_default_status')||'A';
 let reportView='semanal';
@@ -322,6 +333,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
       if(j.status==='success'&&j.players&&j.players.length>0){
         // Sheets es la fuente de verdad: reemplazar lista local
         players=j.players.map(p=>p.nombre);
+        sortPlayers();
         inactiveSet=new Set(j.players.filter(p=>p.activo===false).map(p=>p.nombre.toUpperCase()));
         savePlayers();
         saveInactiveSet();
@@ -1009,6 +1021,8 @@ function renderPlayer(){
 }
 
 // ======================== PLAYERS MGMT ========================
+let editingPlayer=null; // nombre del jugador que se está renombrando ahora mismo (o null)
+
 function renderMgmt(){
   const c=document.getElementById('mgmt-list');
   c.innerHTML='';
@@ -1018,11 +1032,80 @@ function renderMgmt(){
     d.className='mgmt-item'+(active?'':' mgmt-item-inactive');
     if(!active)d.style.opacity='.55';
     const safe=p.replace(/'/g,"\\'");
-    d.innerHTML=`<span>${p}</span>
+
+    if(editingPlayer===p){
+      d.style.opacity='1';
+      d.innerHTML=`<input type="text" id="rename-input" value="${p.replace(/"/g,'&quot;')}" style="flex:1;padding:8px 10px;border:2px solid var(--primary);border-radius:8px;font-size:.9rem;font-family:inherit;margin-right:8px">
+        <button class="btn-sm" style="background:var(--green);color:#fff;min-height:32px;padding:5px 10px" onclick="confirmRename('${safe}')">✓</button>
+        <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 10px;margin-left:4px" onclick="cancelRename()">✕</button>`;
+      c.appendChild(d);
+      return;
+    }
+
+    d.innerHTML=`<span style="flex:1">${p}</span>
+      <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 8px;margin-right:6px" title="Editar nombre" onclick="startRename('${safe}')">✏️</button>
       <button class="btn-sm" style="background:${active?'var(--green-bg)':'var(--gray-light)'};color:${active?'var(--green-text)':'var(--gray)'};min-height:32px;padding:5px 12px"
         onclick="togglePlayerActivo('${safe}')">${active?'✓ Activo':'Inactivo'}</button>`;
     c.appendChild(d);
   });
+}
+
+function startRename(name){
+  editingPlayer=name;
+  renderMgmt();
+  const inp=document.getElementById('rename-input');
+  if(inp){inp.focus();inp.select();}
+}
+
+function cancelRename(){
+  editingPlayer=null;
+  renderMgmt();
+}
+
+async function confirmRename(oldName){
+  const inp=document.getElementById('rename-input');
+  const newName=(inp?inp.value:'').trim();
+  if(!newName){toast('El nombre no puede estar vacío','error');return;}
+  if(newName===oldName){cancelRename();return;}
+  if(players.find(p=>p.toLowerCase()===newName.toLowerCase()&&p.toLowerCase()!==oldName.toLowerCase())){
+    toast('Ya existe un jugador con ese nombre','error');return;
+  }
+
+  const idx=players.findIndex(p=>p===oldName);
+  if(idx===-1){toast('Jugador no encontrado','error');return;}
+
+  // Actualizar estado local: nombre, activo, y alias para el historial viejo
+  players[idx]=newName;
+  sortPlayers();
+  if(inactiveSet.has(oldName.toUpperCase())){
+    inactiveSet.delete(oldName.toUpperCase());
+    inactiveSet.add(newName.toUpperCase());
+    saveInactiveSet();
+  }
+  dynamicAliases[oldName.toUpperCase()]=newName.toUpperCase();
+  saveAliases();
+  savePlayers();
+
+  editingPlayer=null;
+  renderMgmt();
+  renderForm();
+  // Si hay una fecha con el form abierto, recargarla para reflejar el nombre nuevo
+  const fecha=document.getElementById('att-date').value;
+  if(fecha&&document.getElementById('form-body').style.display!=='none'){
+    loadDateData(fecha);
+  }
+
+  if(!scriptUrl){toast('Nombre actualizado (local)','success');return;}
+  try{
+    await fetch(scriptUrl,{
+      method:'POST',mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'renamePlayer',oldName,newName})
+    });
+    toast('Nombre actualizado','success');
+  }catch(e){
+    toast('Error al guardar el nombre nuevo: '+e.message,'error');
+  }
 }
 
 async function addPlayer(){
@@ -1042,7 +1125,7 @@ async function addPlayer(){
       body:JSON.stringify({action:'addPlayer',name})
     });
     // Agregar localmente y actualizar UI
-    players.push(name);savePlayers();
+    players.push(name);sortPlayers();savePlayers();
     inp.value='';
     renderForm();renderMgmt();
     toast('Jugador agregado en Sheets','success');
@@ -1054,8 +1137,10 @@ async function addPlayer(){
 }
 
 
+function sortPlayers(){players.sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));}
 function savePlayers(){localStorage.setItem('club_players',JSON.stringify(players));}
 function saveInactiveSet(){localStorage.setItem('club_inactive_players',JSON.stringify([...inactiveSet]));}
+function saveAliases(){localStorage.setItem('club_name_aliases',JSON.stringify(dynamicAliases));}
 function isActive(name){return !inactiveSet.has((name||'').toUpperCase());}
 function activePlayers(){return players.filter(isActive);}
 
@@ -1120,7 +1205,13 @@ function sendNotification(title,body){
 function norm(n){
   if(!n)return'';
   let s=n.trim().replace(/["'\u201C\u201D\u2018\u2019]/g,'').replace(/\s+/g,' ').toUpperCase();
-  if(ALIASES[s])return ALIASES[s];
+  // Resolver alias (incluye renombres hechos desde la app). Con protecci\u00F3n
+  // contra ciclos por si un nombre fue renombrado varias veces.
+  for(let i=0;i<10;i++){
+    if(dynamicAliases[s]){s=dynamicAliases[s];continue;}
+    if(ALIASES[s]){s=ALIASES[s];continue;}
+    break;
+  }
   // Check against dynamic players list first (from Jugadores sheet)
   for(const p of players){
     if(s===p.toUpperCase())return p.toUpperCase();
@@ -1156,6 +1247,26 @@ function toast(msg,type){
 // ======================== PWA / SERVICE WORKER ========================
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+
+async function forceUpdate(){
+  const btn=document.getElementById('btn-force-update');
+  if(btn){btn.disabled=true;btn.textContent='Actualizando...';}
+  try{
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      for(const reg of regs){await reg.unregister();}
+    }
+    if('caches' in window){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+    toast('Caché limpiado — recargando...','success');
+  }catch(e){
+    toast('No se pudo limpiar todo el caché, recargando igual...','error');
+  }finally{
+    setTimeout(()=>{window.location.reload();},600);
+  }
 }
 </script>
 </body>
