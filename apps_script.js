@@ -71,6 +71,9 @@ function doPost(e) {
       case 'addPlayer':
         response = addNewPlayer(data.name);
         break;
+      case 'setPlayerActivo':
+        response = setPlayerActivo(data.name, data.activo);
+        break;
       default:
         response = { status: 'error', message: 'Unknown action' };
     }
@@ -258,11 +261,13 @@ function getPlayersData() {
     const values = range.getValues();
     const players = [];
 
-    // Skip header row — only read column A (Nombre), ignore other columns
+    // Skip header row — leer columna A (Nombre) y columna G (Activo)
+    // Columna G: 'NO' = inactivo, cualquier otro valor (o vacío) = activo
     for (let i = 1; i < values.length; i++) {
       const nombre = (values[i][0] || '').toString().trim();
       if (nombre) {
-        players.push({ nombre: nombre });
+        const activoRaw = (values[i][6] || '').toString().trim().toUpperCase();
+        players.push({ nombre: nombre, activo: activoRaw !== 'NO' });
       }
     }
 
@@ -271,6 +276,36 @@ function getPlayersData() {
       count: players.length,
       players: players
     };
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Activar o desactivar un jugador (columna G de la hoja Jugadores).
+ * Los jugadores desactivados mantienen todo su historial de asistencias,
+ * pero dejan de aparecer en la carga de asistencia y en los reportes.
+ */
+function setPlayerActivo(name, activo) {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
+    if (!sheet) {
+      return { status: 'error', message: 'Hoja Jugadores no encontrada' };
+    }
+
+    const values = sheet.getDataRange().getValues();
+    for (let i = 1; i < values.length; i++) {
+      const nombre = (values[i][0] || '').toString().trim();
+      if (nombre.toLowerCase() === (name || '').toString().trim().toLowerCase()) {
+        sheet.getRange(i + 1, 7).setValue(activo ? '' : 'NO'); // columna G = Activo
+        return { status: 'success', message: 'Estado actualizado' };
+      }
+    }
+    return { status: 'error', message: 'Jugador no encontrado' };
   } catch (error) {
     return {
       status: 'error',

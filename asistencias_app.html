@@ -178,7 +178,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
       <button class="btn-sm btn-sec" style="min-height:48px;flex-shrink:0" onclick="setToday()">Hoy</button>
     </div>
     <div id="dates-strip" class="dates-strip">
-      <div class="strip-lbl">📋 Días con datos cargados:</div>
+      <div class="strip-lbl">📋 Últimos días cargados:</div>
       <div id="dates-chips" class="chips"></div>
     </div>
     <div id="status-card"></div>
@@ -253,7 +253,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         </div>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px">v1.2.0 · Corte Clausura: 1 Jul 2026</p>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px">v1.3.0 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -266,7 +266,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.2.0';
+const APP_VERSION='1.3.0';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -287,6 +287,7 @@ const APP_MODE=new URLSearchParams(window.location.search).get('mode')||'';
 
 // ======================== STATE ========================
 let players=JSON.parse(localStorage.getItem('club_players')||'null')||[];
+let inactiveSet=new Set(JSON.parse(localStorage.getItem('club_inactive_players')||'[]'));
 let scriptUrl=localStorage.getItem('club_script_url')||DEFAULT_SCRIPT_URL;
 let defaultStatus=localStorage.getItem('club_default_status')||'A';
 let reportView='semanal';
@@ -321,7 +322,9 @@ document.addEventListener('DOMContentLoaded',async()=>{
       if(j.status==='success'&&j.players&&j.players.length>0){
         // Sheets es la fuente de verdad: reemplazar lista local
         players=j.players.map(p=>p.nombre);
+        inactiveSet=new Set(j.players.filter(p=>p.activo===false).map(p=>p.nombre.toUpperCase()));
         savePlayers();
+        saveInactiveSet();
         // Si ya hay fecha seleccionada, recargar el form con la nueva lista
         const fechaSel=document.getElementById('att-date').value;
         if(fechaSel) loadDateData(fechaSel);
@@ -481,7 +484,7 @@ function loadDateData(fecha){
     applyFormData(records);
     renderStatusCard('banner-loaded',fecha);
   } else {
-    players.forEach((_,i)=>setStatus(i,defaultStatus));
+    activePlayers().forEach((_,i)=>setStatus(i,defaultStatus));
     renderStatusCard('banner-new',fecha);
   }
 }
@@ -506,13 +509,13 @@ function renderDatesStrip(){
   const strip=document.getElementById('dates-strip');
   const chips=document.getElementById('dates-chips');
   if(!loadedDates.size){strip.style.display='none';return;}
-  // Mostrar los últimos 10 días con datos, más reciente primero
-  const sorted=[...loadedDates].sort().reverse().slice(0,10);
+  // Mostrar los últimos 7 días con datos, más reciente primero
+  const sorted=[...loadedDates].sort().reverse().slice(0,7);
   chips.innerHTML='';
   sorted.forEach(d=>{
     const chip=document.createElement('button');
     chip.className='date-chip';
-    chip.textContent=formatDateShort(d);
+    chip.textContent=formatChipLabel(d);
     chip.title=formatDateLong(d);
     chip.onclick=()=>{
       document.getElementById('att-date').value=d;
@@ -529,12 +532,13 @@ function renderDatesStrip(){
 }
 
 function applyFormData(records){
+  const ap=activePlayers();
   // Reset all to P first
-  players.forEach((_,i)=>setStatus(i,'P'));
+  ap.forEach((_,i)=>setStatus(i,'P'));
   // Build lookup map normalized name -> {estado, obs}
   const map={};
   records.forEach(r=>{map[norm(r.jugador)]={estado:r.estado,obs:r.observacion||''};});
-  players.forEach((p,i)=>{
+  ap.forEach((p,i)=>{
     const d=map[norm(p)];
     if(d){
       setStatus(i,d.estado);
@@ -546,7 +550,7 @@ function applyFormData(records){
 function renderForm(){
   const c=document.getElementById('att-list');
   c.innerHTML='';
-  players.forEach((p,i)=>{
+  activePlayers().forEach((p,i)=>{
     const div=document.createElement('div');
     div.className='player-card status-P';
     div.id='pc-'+i;
@@ -584,7 +588,7 @@ function getFormData(){
   if(!fecha)return null;
   const ts=new Date().toISOString();
   const records=[];
-  players.forEach((p,i)=>{
+  activePlayers().forEach((p,i)=>{
     const card=document.getElementById('pc-'+i);
     const selBtn=card.querySelector('.status-btns button[class*="sel-"]');
     let st='P';
@@ -689,8 +693,8 @@ async function loadReports(){
     psel.innerHTML='';
     const allP=new Set();
     rawAllDays.forEach(d=>Object.keys(d.players).forEach(p=>allP.add(p)));
-    players.forEach(p=>allP.add(norm(p)));
-    [...allP].sort().forEach(p=>{
+    activePlayers().forEach(p=>allP.add(norm(p)));
+    [...allP].filter(p=>!inactiveSet.has(p)).sort().forEach(p=>{
       const o=document.createElement('option');o.value=p;o.textContent=displayName(p);psel.appendChild(o);
     });
 
@@ -768,7 +772,7 @@ function renderWeekly(){
 
   const displayDays=semanalShowAll?getWeekDays(curWeek):practiceDays;
 
-  const allP=[...new Set([...players.map(p=>norm(p)),...weekData.flatMap(d=>Object.keys(d.players))])];
+  const allP=[...new Set([...activePlayers().map(p=>norm(p)),...weekData.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
   const att={};
   allP.forEach(p=>{att[p]=0;});
   weekData.forEach(d=>{
@@ -851,7 +855,7 @@ function renderTotales(){
   const total=allDays.length;
   if(!total){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos disponibles.</div>';return;}
 
-  const allP=[...new Set([...players.map(p=>norm(p)),...allDays.flatMap(d=>Object.keys(d.players))])];
+  const allP=[...new Set([...activePlayers().map(p=>norm(p)),...allDays.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p));
   const att={};
   allP.forEach(p=>{att[p]=0;});
   allDays.forEach(d=>{
@@ -907,7 +911,7 @@ function renderMonthly(){
   if(!data.length){out.innerHTML='<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos para este mes.</div>';return;}
 
   const total=data.length;
-  const allP=[...new Set([...players.map(p=>norm(p)),...data.flatMap(d=>Object.keys(d.players))])].sort();
+  const allP=[...new Set([...activePlayers().map(p=>norm(p)),...data.flatMap(d=>Object.keys(d.players))])].filter(p=>!inactiveSet.has(p)).sort();
 
   // By week
   const weeks={};
@@ -1009,8 +1013,14 @@ function renderMgmt(){
   const c=document.getElementById('mgmt-list');
   c.innerHTML='';
   players.forEach(p=>{
-    const d=document.createElement('div');d.className='mgmt-item';
-    d.innerHTML=`<span>${p}</span><span class="act">Activo</span>`;
+    const active=isActive(p);
+    const d=document.createElement('div');
+    d.className='mgmt-item'+(active?'':' mgmt-item-inactive');
+    if(!active)d.style.opacity='.55';
+    const safe=p.replace(/'/g,"\\'");
+    d.innerHTML=`<span>${p}</span>
+      <button class="btn-sm" style="background:${active?'var(--green-bg)':'var(--gray-light)'};color:${active?'var(--green-text)':'var(--gray)'};min-height:32px;padding:5px 12px"
+        onclick="togglePlayerActivo('${safe}')">${active?'✓ Activo':'Inactivo'}</button>`;
     c.appendChild(d);
   });
 }
@@ -1045,6 +1055,33 @@ async function addPlayer(){
 
 
 function savePlayers(){localStorage.setItem('club_players',JSON.stringify(players));}
+function saveInactiveSet(){localStorage.setItem('club_inactive_players',JSON.stringify([...inactiveSet]));}
+function isActive(name){return !inactiveSet.has((name||'').toUpperCase());}
+function activePlayers(){return players.filter(isActive);}
+
+async function togglePlayerActivo(name){
+  const nowActive=!isActive(name); // estado al que va a pasar
+  const key=name.toUpperCase();
+  if(nowActive)inactiveSet.delete(key);else inactiveSet.add(key);
+  saveInactiveSet();
+  renderMgmt();
+  // Si el form de asistencia está abierto, refrescar la lista de jugadores activos
+  const fecha=document.getElementById('att-date').value;
+  if(fecha&&document.getElementById('form-body').style.display!=='none'){
+    loadDateData(fecha);
+  }
+  if(!scriptUrl)return;
+  try{
+    await fetch(scriptUrl,{
+      method:'POST',mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'setPlayerActivo',name,activo:nowActive})
+    });
+    toast(nowActive?'Jugador activado':'Jugador desactivado','success');
+  }catch(e){
+    toast('Error al guardar el estado: '+e.message,'error');
+  }
+}
 function saveCfg(){
   scriptUrl=document.getElementById('cfg-url').value.trim();
   localStorage.setItem('club_script_url',scriptUrl);
@@ -1105,6 +1142,7 @@ function weekKey(ds){
 }
 
 function formatDateShort(ds){const d=new Date(ds+'T12:00:00');return DIAS_C[d.getDay()]+' '+d.getDate().toString().padStart(2,'0');}
+function formatChipLabel(ds){const d=new Date(ds+'T12:00:00');return DIAS_C[d.getDay()]+' '+d.getDate()+' '+MESES[d.getMonth()].substring(0,3);}
 function formatDateLong(ds){const d=new Date(ds+'T12:00:00');return DIAS_L[d.getDay()]+' '+d.getDate()+' '+MESES[d.getMonth()];}
 function formatWeek(wk){const d=new Date(wk+'T12:00:00');const e=new Date(d);e.setDate(e.getDate()+6);return`${d.getDate()} ${MESES[d.getMonth()].substring(0,3)} - ${e.getDate()} ${MESES[e.getMonth()].substring(0,3)}`;}
 function formatMonth(mk){const[y,m]=mk.split('-');return MESES[+m-1]+' '+y;}
