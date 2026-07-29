@@ -1,4 +1,4 @@
-const CACHE_NAME = 'asistencias-v24';
+const CACHE_NAME = 'asistencias-v25';
 const CACHED_URLS = [
   './asistencias_app.html',
   './manifest.json',

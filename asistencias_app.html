@@ -287,7 +287,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
         <p style="font-size:.8rem;color:var(--gray);display:none" id="no-pending-msg">✓ No hay cambios pendientes de sincronizar.</p>
       </div>
     </div>
-  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.8.2 · Corte Clausura: 1 Jul 2026</p>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer">v1.8.3 · Corte Clausura: 1 Jul 2026</p>
   </div>
 </div>
 
@@ -309,7 +309,7 @@ body{display:flex;flex-direction:column;padding-bottom:68px}
 
 <script>
 // ======================== CONFIG ========================
-const APP_VERSION='1.8.2';
+const APP_VERSION='1.8.3';
 const SHEET_ID='1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const DEFAULT_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxhHtweVcfXJoiX-caV0eGDXJDRpjriJrK1Mfguz8_Yyg14ftyzheEilSzJ8zXt4B6yVQ/exec';
 const DIAS_C=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -481,6 +481,10 @@ async function renderTodayQuickAccess(){
       const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
       const j=await r.json();
       records=(j.status==='success'&&j.data)?j.data:[];
+      // La planilla es la fuente de verdad: si no hay un guardado local todavía
+      // pendiente de subir para esta fecha, actualizamos el respaldo offline
+      // para que refleje lo que realmente hay en Sheets (incluye borrados).
+      if(!hasPendingSaveFor(fecha)) localStorage.setItem('att_'+fecha,JSON.stringify(records));
     }catch(e){
       const stored=localStorage.getItem('att_'+fecha);
       records=stored?(JSON.parse(stored)||[]):[];
@@ -572,6 +576,10 @@ async function onDateChange(fecha){
         const r=await fetch(scriptUrl+'?action=getAttendance&fecha='+fecha);
         const j=await r.json();
         records=(j.status==='success'&&j.data)?j.data:[];
+        // Igual que en renderTodayQuickAccess: sincronizar el respaldo offline
+        // con lo que hay realmente en Sheets, salvo que haya un guardado local
+        // todavía sin subir para esta fecha (no lo queremos pisar).
+        if(!hasPendingSaveFor(fecha)) localStorage.setItem('att_'+fecha,JSON.stringify(records));
       }catch(e){
         // fallback localStorage
         const stored=localStorage.getItem('att_'+fecha);
@@ -829,6 +837,12 @@ function queuePendingAction(action,payload,dedupeKey,label){
   pendingQueue.push({id:genId(),action,payload,dedupeKey,label,ts:Date.now()});
   savePendingQueue();
   renderPendingBanner();
+}
+
+// Hay un guardado de asistencia de esta fecha hecho localmente que todavía no
+// se subió a Sheets — no hay que pisarlo con lo que devuelva el servidor.
+function hasPendingSaveFor(fecha){
+  return pendingQueue.some(p=>p.action==='saveAttendance'&&p.dedupeKey===fecha);
 }
 
 let syncingPending=false;
