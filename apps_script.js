@@ -114,17 +114,36 @@ function doPost(e) {
     const action = data.action;
     let response = {};
 
-    // Toda escritura requiere (staffId, pin) de una fila habilitada de
-    // CuerpoTecnico. doGet queda abierto a proposito: la consulta es publica.
-    if (!staffAutorizado(data.staffId, data.pin)) {
-      return ContentService.createTextOutput(JSON.stringify({
+    // Puerta de entrada: todo POST requiere (staffId, pin) de una fila
+    // habilitada de CuerpoTecnico. Aplica a verifyPin y a las 4 escrituras.
+    // doGet queda abierto a proposito: la consulta es publica.
+    const bloqueo = estadoBloqueo(data.staffId);
+    if (bloqueo.bloqueado) {
+      return jsonOut({
+        status: 'error',
+        code: 'bloqueado',
+        message: 'Demasiados intentos fallidos. Esperá 15 minutos y volvé a probar.'
+      });
+    }
+    if (!pinValido(data.staffId, data.pin)) {
+      const n = registrarFallo(data.staffId);
+      // El mensaje no distingue si el problema es el PIN o el usuario: decirlo
+      // le confirmaria a quien prueba cual de los dos acerto.
+      return jsonOut({
         status: 'error',
         code: 'no-autorizado',
-        message: 'PIN incorrecto o usuario no habilitado para cargar.'
-      })).setMimeType(ContentService.MimeType.JSON);
+        restantes: Math.max(0, MAX_INTENTOS - n),
+        message: 'PIN incorrecto.'
+      });
     }
+    limpiarFallos(data.staffId);
 
     switch (action) {
+      // Solo valida y responde: no escribe nada. Es lo que permite rechazar el
+      // PIN cuando el profe lo ingresa, en vez de esperar al primer guardado.
+      case 'verifyPin':
+        response = { status: 'success', message: 'PIN correcto' };
+        break;
       case 'saveAttendance':
         response = saveAttendanceData(data.data, data.overwrite === true);
         break;
@@ -141,20 +160,54 @@ function doPost(e) {
         response = { status: 'error', message: 'Unknown action' };
     }
 
-    return ContentService.createTextOutput(JSON.stringify(response))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonOut(response);
   } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({
-      status: 'error',
-      message: error.toString()
-    }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonOut({ status: 'error', message: error.toString() });
   }
+}
+
+/** Respuesta JSON. ContentService.TextOutput NO soporta setHeader(). */
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ======================== BLOQUEO POR INTENTOS FALLIDOS ========================
+// 5 fallos seguidos => bloqueado 15 minutos.
+//
+// El contador va por staffId, no por dispositivo: si no, cambiar de navegador
+// o entrar de incognito reseteaba el limite y no frenaba nada.
+//
+// Se usa CacheService y NO PropertiesService a proposito: el cache expira solo,
+// asi que el bloqueo se levanta sin que nadie intervenga. Con Properties habria
+// que limpiarlo a mano, y un profe podria quedar trabado un domingo a la noche
+// sin nadie a quien llamar.
+const MAX_INTENTOS = 5;
+const BLOQUEO_SEG = 15 * 60;
+
+function estadoBloqueo(staffId) {
+  if (!staffId) return { intentos: 0, bloqueado: false };
+  const n = parseInt(CacheService.getScriptCache().get('pinfail_' + staffId) || '0', 10);
+  return { intentos: n, bloqueado: n >= MAX_INTENTOS };
+}
+
+function registrarFallo(staffId) {
+  if (!staffId) return 0;
+  const cache = CacheService.getScriptCache();
+  const n = parseInt(cache.get('pinfail_' + staffId) || '0', 10) + 1;
+  // Cada fallo renueva la ventana: 5 intentos dentro de 15 minutos, no 5 de por vida.
+  cache.put('pinfail_' + staffId, String(n), BLOQUEO_SEG);
+  return n;
+}
+
+function limpiarFallos(staffId) {
+  if (!staffId) return;
+  CacheService.getScriptCache().remove('pinfail_' + staffId);
 }
 
 /**
  * Valida que (staffId, pin) corresponda a una fila habilitada de CuerpoTecnico.
- * El PIN son los ultimos 4 digitos del DNI, cargados a mano en la columna E.
+ * El PIN es de 4 digitos y se carga a mano en la columna E.
  *
  * Sin PIN en la hoja => no puede escribir (decision explicita, no lo cambies
  * por un fallback permisivo: dejaria la validacion sin efecto).
@@ -163,7 +216,7 @@ function doPost(e) {
  * endpoint es un GET publico y si el PIN viajara ahi, todo esto no serviria
  * para nada.
  */
-function staffAutorizado(staffId, pin) {
+function pinValido(staffId, pin) {
   if (!staffId || !pin) return false;
   const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(STAFF_SHEET_NAME);
   if (!sheet) return false;
@@ -400,7 +453,7 @@ function getPlayersData() {
  *
  * ⚠️ La columna E (PIN) NO se lee ni se devuelve acá, y no hay que agregarla:
  * este endpoint es un GET público. El PIN se usa solo dentro de
- * staffAutorizado(), que corre del lado del servidor.
+ * pinValido(), que corre del lado del servidor.
  */
 function getStaffData() {
   try {
@@ -616,8 +669,8 @@ function initializeSheets() {
     }
 
     // CuerpoTecnico sheet — la carga a mano el usuario (Nombre/Cargo/Habilitado
-    // y el PIN, que son los últimos 4 dígitos del DNI); solo se crea con
-    // encabezados si todavía no existe.
+    // y el PIN de 4 dígitos); solo se crea con encabezados si todavía no
+    // existe.
     const staffSheet = spreadsheet.getSheetByName(STAFF_SHEET_NAME);
     if (!staffSheet) {
       const newStaffSheet = spreadsheet.insertSheet(STAFF_SHEET_NAME);

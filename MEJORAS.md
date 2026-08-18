@@ -34,12 +34,12 @@ Reglas que aplican a TODAS las tareas:
 - [x] T1 — Limpieza de archivos y código muerto — `76d40bf`
 - [x] T2 — Que el POST deje de ser ciego (prerequisito de T4) — `a816ef6`
 - [x] T3 — Escapar HTML en datos de usuario — `62a34c1`
-- [x] T4 — PIN del cuerpo técnico para autorizar escrituras — `3045fb7`
+- [x] T4 — PIN del cuerpo técnico para autorizar escrituras — `3045fb7`, revisada más abajo
 - [x] T5 — LockService + escrituras en lote en el Apps Script — `638138f`
 - [x] T6 — Reportes por rango de fechas (no traer todo el historial) — `f7c9313`
 - [x] T7 — Actualizar documentación y cierre
 
-**Todo terminado.** `sw.js` quedó en `asistencias-v35`. `CACHED_URLS` no referencia ningún archivo borrado (`asistencias.html` nunca estuvo ahí).
+**Todo terminado.** `sw.js` quedó en `asistencias-v37`. `CACHED_URLS` no referencia ningún archivo borrado (`asistencias.html` nunca estuvo ahí).
 
 ---
 
@@ -52,8 +52,8 @@ Esto no lo puede hacer el código. **En este orden:**
 2. **Deployar el Apps Script**: pegar `apps_script.js` en el editor de GAS y hacer
    **Deploy → Manage deployments → Deploy new version**. Guardar no alcanza.
    Lo tocaron T1, T4, T5 y T6.
-3. **Avisarle a cada profe su PIN** (son los últimos 4 dígitos de su DNI). La primera vez
-   que abran la app les va a pedir el nombre y después el PIN.
+3. **Avisarle a cada profe su PIN** por un canal privado (no por el repo ni por el chat del
+   equipo). La primera vez que abran la app les va a pedir el nombre y después el PIN.
 4. **Probar en la planilla real** lo que la suite no puede verificar sola:
    guardar un día, volver a guardarlo con estados distintos, y confirmar que quedó
    **exactamente una fila por jugador** (T5). Cronometrar antes/después con ~25 jugadores:
@@ -207,98 +207,76 @@ Puntos confirmados sin escapar:
 
 ## T4 — PIN del cuerpo técnico para autorizar escrituras
 
-**Por qué:** el Apps Script está deployado como "Cualquier persona" y `doPost` no valida nada. Quien abra la consola del navegador (o mande un curl) puede sobrescribir la asistencia de cualquier día. La separación en dos apps es de UX, no de seguridad.
+> **Especificación revisada.** Reemplaza la versión original de esta tarea. Tres cambios
+> respecto de aquella: el PIN se valida **al ingresarlo** (no recién al guardar), hay
+> **bloqueo temporal** tras 5 intentos fallidos, y **ninguna referencia en ningún archivo ni
+> en la interfaz** a de qué se derivan los dígitos — este repo es público.
 
-**Decisiones ya tomadas (no las cambies):**
-- El PIN son **los últimos 4 dígitos del DNI** de cada profe.
-- **Sin PIN cargado en la hoja, el profe no puede escribir.** No hay modo permisivo.
-- Requiere T2 terminada: si no, el rechazo se ve como guardado exitoso.
+**Por qué:** el Apps Script está deployado como "Cualquier persona" y `doPost` no validaba
+nada. Quien abriera la consola del navegador (o mandara un curl) podía sobrescribir la
+asistencia de cualquier día. La separación en dos apps es de UX, no de seguridad.
 
-**Archivos:** `apps_script.js`, `carga.html`, hoja `CuerpoTecnico`
+Requiere T2 terminada: sin poder leer la respuesta del servidor, nada de esto funciona.
 
-**Qué hacer:**
+**Decisiones tomadas, no las cambies:**
+- Sin PIN cargado en la hoja, el profe no puede escribir. No hay modo permisivo.
+- El contador de intentos va por `staffId`, **no por dispositivo**.
+- El mensaje de error dice solo "PIN incorrecto", nunca si el problema es el PIN o el usuario.
 
 ### 4a. Esquema de la hoja
-
-La hoja `CuerpoTecnico` hoy es `A=Nombre | B=Cargo | C=Habilitado | D=ID`.
-Agregar **`E=PIN`**. M carga a mano los 4 dígitos de cada profe.
+`CuerpoTecnico` pasa de `A=Nombre | B=Cargo | C=Habilitado | D=ID` a sumar **`E=PIN`**
+(4 dígitos, los carga M a mano).
 
 ### 4b. Apps Script
-
-1. **`getStaffData()` NO debe devolver el PIN.** Es el punto más importante de toda la tarea: ese endpoint es un GET público. Leé la columna E solo dentro de la función de validación, nunca en la respuesta de `getStaff`.
-
-2. Agregar la validación:
-   ```js
-   /**
-    * Valida que (staffId, pin) corresponda a una fila habilitada de CuerpoTecnico.
-    * El PIN son los últimos 4 dígitos del DNI, cargados a mano en la columna E.
-    * Sin PIN en la hoja => no puede escribir (decisión explícita, no lo cambies
-    * por un fallback permisivo: dejaría la validación sin efecto).
-    */
-   function staffAutorizado(staffId, pin) {
-     if (!staffId || !pin) return false;
-     const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(STAFF_SHEET_NAME);
-     if (!sheet) return false;
-     const values = sheet.getDataRange().getValues();
-     for (let i = 1; i < values.length; i++) {
-       const rowId  = (values[i][3] || '').toString().trim();
-       const rowPin = (values[i][4] || '').toString().trim();
-       const habilitado = (values[i][2] || '').toString().trim().toUpperCase() !== 'NO';
-       if (rowId && rowId === staffId.toString().trim()) {
-         return habilitado && rowPin !== '' && rowPin === pin.toString().trim();
-       }
-     }
-     return false;
-   }
-   ```
-
-3. En `doPost`, **antes** del `switch`, cortar si no está autorizado:
-   ```js
-   if (!staffAutorizado(data.staffId, data.pin)) {
-     return ContentService.createTextOutput(JSON.stringify({
-       status: 'error',
-       code: 'no-autorizado',
-       message: 'PIN incorrecto o usuario no habilitado para cargar.'
-     })).setMimeType(ContentService.MimeType.JSON);
-   }
-   ```
-   Aplica a las 4 acciones: `saveAttendance`, `addPlayer`, `setPlayerActivo`, `renamePlayer`.
-   **No toques `doGet`** — la consulta sigue siendo abierta a propósito.
+1. **`getStaffData()` NO devuelve el PIN.** Es el punto más importante de toda la tarea: ese
+   endpoint es un GET público. La columna E se lee solo dentro de `pinValido()`.
+2. `pinValido(staffId, pin)`: exige fila habilitada, PIN no vacío y coincidente.
+3. **Bloqueo:** 5 fallos → 15 minutos bloqueado, con `CacheService` y **no**
+   `PropertiesService`. El cache expira solo, así que el bloqueo se levanta sin que nadie
+   intervenga; con Properties habría que limpiarlo a mano y un profe podría quedar trabado un
+   domingo a la noche sin nadie a quien llamar. Un PIN correcto limpia el contador.
+4. **Acción `verifyPin`:** solo valida y responde, no escribe nada. Es la que permite rechazar
+   el PIN al ingresarlo en vez de esperar al guardado.
+5. **Puerta de entrada en `doPost`**, antes del `switch`: primero `estadoBloqueo`
+   (`code:'bloqueado'`), después `pinValido` (`code:'no-autorizado'` + `restantes`). Aplica a
+   `verifyPin` y a las 4 escrituras. **No toca `doGet`** — la consulta sigue abierta a
+   propósito.
 
 ### 4c. Cliente (`carga.html`)
+6. `postToScript()` agrega `staffId` y `pin` **en el momento del envío**, nunca dentro del
+   payload que se encola: un item viejo de la cola tiene que subir con el PIN vigente.
+   `postToScriptComo()` es la variante con credenciales explícitas, para verificar un PIN que
+   todavía no está guardado.
+7. **Picker con validación inmediata:** después de elegir el nombre pide el PIN
+   (`type="password"`, `inputmode="numeric"`, `maxlength="4"`) y llama a `verifyPin` **antes**
+   de guardar nada. Si el servidor lo rechaza: error debajo del input, se limpia el campo, el
+   modal no se cierra y el PIN **no** se guarda. Desde el tercer fallo muestra cuántos
+   intentos quedan. Si vuelve `bloqueado`, deshabilita el botón de confirmar.
+   El label es "PIN" y la única ayuda dice "Te lo da el encargado de la planilla".
+8. **Sin conexión al configurar:** si `verifyPin` falla por red (no por rechazo del servidor),
+   se guarda el PIN con un aviso y se valida al primer guardado. Sin esto, un profe sin señal
+   no podría ni terminar de configurar la app.
+9. **Cambiar PIN** desde Config abre el mismo flujo con la misma validación.
+10. **Rechazo al guardar** (pasa si M cambia el PIN en la planilla mientras el profe lo tiene
+    guardado): modal claro, **no** se borra el guardado local ni la cola, y el item queda
+    marcado `needsPin` para que el reintento automático cada 60s no insista con el mismo PIN
+    malo — que además solo sumaría fallos hasta bloquearlo.
 
-4. `postToScript()` agrega `staffId` y `pin` a **todos** los POST:
-   ```js
-   body:JSON.stringify({action,staffId:myStaffId,pin:myStaffPin,...payload})
-   ```
+**Verificación:** mock con `s1` PIN `1234`, `s2` sin PIN, más el contador de fallos.
+PIN correcto cierra y guarda · PIN incorrecto no cierra, limpia el campo y no guarda ·
+5 fallos → `bloqueado` y botón deshabilitado · profe sin PIN rechazado ·
+**`getStaff` no devuelve `pin`** (check crítico) · sin conexión deja configurar con aviso ·
+la app de consulta sigue funcionando sin PIN · ningún archivo del repo menciona de dónde
+salen los dígitos.
 
-5. Guardar el PIN en `localStorage` con la clave `club_staff_pin`, junto a `club_staff_id`.
+**Listo cuando:** un `curl` con un POST de `saveAttendance` sin PIN válido es rechazado,
+escribir mal el PIN cinco veces bloquea 15 minutos, y los profes con PIN cargado guardan
+normal.
 
-6. En el picker "¿Quién sos?": después de elegir el nombre, pedir el PIN. Input `type="password"` con `inputmode="numeric"` y `maxlength="4"` (en el celular tiene que abrir el teclado numérico). El picker bloqueante de la primera vez no se cierra hasta que haya nombre **y** PIN.
-
-7. En Config, donde hoy dice "Estás cargando como: X", agregar un botón **"Cambiar PIN"** para corregirlo sin tener que reelegir quién sos.
-
-8. **Manejo del rechazo (importante para que no se pierdan datos):** cuando un POST vuelve con `code:'no-autorizado'`:
-   - Mostrar un modal claro: "PIN incorrecto — la asistencia quedó guardada en este dispositivo pero no se subió".
-   - **No borrar el guardado local ni la cola.** El profe corrige el PIN y le da a "Sincronizar", y sube lo que ya tenía cargado.
-   - **No** encolar reintentos automáticos de algo rechazado por PIN: reintentar cada 60s con el mismo PIN malo no sirve. Marcá el item de la cola como "necesita PIN" y que solo se reintente después de que el profe cambie el PIN.
-
-9. **Ojo con la cola offline:** los items encolados guardan el payload al momento de encolar. Si el PIN se manda dentro del payload, un item viejo puede llevar un PIN desactualizado. Resolvelo agregando `staffId`/`pin` **en el momento del envío** (dentro de `postToScript`), no al encolar. El código del punto 4 ya hace eso — asegurate de que `queuePendingAction` no guarde el PIN en el payload.
-
-**Verificación:**
-- Mock: `staffAutorizado` simulado; `s1` con PIN `1234`, `s2` **sin PIN**.
-- Check: POST con PIN correcto → guarda.
-- Check: POST con PIN incorrecto → modal de error, el dato queda en localStorage, la cola conserva el item.
-- Check: profe sin PIN en la hoja → rechazado.
-- Check: **`getStaff` no devuelve el campo `pin`** en ninguna fila. Este es el check crítico — si el PIN viaja en el GET, toda la tarea no sirve para nada.
-- Check: la app de consulta sigue funcionando sin PIN (solo lee).
-
-**Listo cuando:** un `curl` con un POST de `saveAttendance` sin PIN válido es rechazado, y los profes con PIN cargado guardan normal.
-
-> **Antes de deployar:** M tiene que cargar la columna E de todos los profes habilitados. Si deployás con la columna vacía, **nadie puede cargar asistencia**.
+> **Antes de deployar:** M tiene que cargar la columna E de todos los profes habilitados. Si
+> deployás con la columna vacía, **nadie puede cargar asistencia**.
 
 ---
-
 ## T5 — LockService + escrituras en lote en el Apps Script
 
 **Por qué:** dos problemas en `saveAttendanceData()`.
@@ -454,6 +432,23 @@ Cosas que aparecieron durante la implementación.
 - **T6 — `ampliarRango()` va 30 → 90 → todos, sin pasar por "Torneo".** El ancho de "Torneo"
   depende de la fecha de hoy (hoy `TORNEO_CUTOFF` cae *después* de los 90 días, así que
   sería un paso hacia atrás). Torneo sigue disponible como opción del selector.
+
+### ⚠️ El origen del PIN quedó en el historial de git
+
+El Paso 0 de la T4 revisada sacó de los archivos toda mención a de qué se derivan los dígitos
+del PIN. Pero **eso ya estaba commiteado** en `3045fb7` y `544a3d9`, así que sigue visible en
+el historial del repo, que es público: `git log -p` lo muestra igual.
+
+Reescribir la historia (`filter-repo` + force push) no vale la pena para esto y rompería
+cualquier clon existente. Lo que sí conviene tener en cuenta:
+
+- Es una pista sobre **cómo se eligieron** los PIN actuales, no los PIN en sí — esos nunca
+  estuvieron en el repo, están solo en la columna E de la planilla.
+- Si te parece que importa, la salida limpia no es reescribir la historia sino **cambiar los
+  PIN por números que no se deriven de nada** y avisarles a los profes. El código ya no supone
+  nada sobre su origen.
+- De acá en adelante hay un check automático que falla si alguien vuelve a escribirlo en
+  cualquier archivo del repo (`_test/apps-script.test.js`).
 
 ### Cosas del entorno, no del código
 

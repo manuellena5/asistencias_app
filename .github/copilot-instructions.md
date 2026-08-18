@@ -47,15 +47,23 @@ Si estás por agregar un POST, preguntate en qué archivo va. Si la respuesta es
 
 La separación en dos apps es de UX. Lo que **sí** frena a quien abra la consola es el PIN:
 
-- Cada profe tiene un PIN en la columna **E de `CuerpoTecnico`** (los últimos 4 dígitos de su DNI, cargados a mano).
-- Todo POST manda `staffId` + `pin`. `doPost` corta antes del `switch` con `staffAutorizado(staffId, pin)` y devuelve `{status:'error', code:'no-autorizado'}` si no valida.
+- Cada profe tiene un PIN de 4 dígitos en la columna **E de `CuerpoTecnico`**, cargado a mano.
+- Todo POST manda `staffId` + `pin`. `doPost` corta **antes** del `switch` con `pinValido(staffId, pin)` y devuelve `{status:'error', code:'no-autorizado', restantes}` si no valida.
 - **Sin PIN en la hoja, ese profe no puede escribir.** Es una decisión explícita: no agregar un fallback permisivo, dejaría la validación sin efecto.
-- **`getStaffData()` nunca devuelve la columna E.** Es un GET público: si el PIN viajara ahí, toda la validación no serviría para nada. La columna E se lee solo dentro de `staffAutorizado()`.
+- **`getStaffData()` nunca devuelve la columna E.** Es un GET público: si el PIN viajara ahí, toda la validación no serviría para nada. La columna E se lee solo dentro de `pinValido()`.
 - `doGet` sigue abierto a propósito: la consulta es pública.
+
+> 🔒 **No documentes ni menciones en ningún lado de dónde salen esos dígitos** — ni en comentarios, ni en docs, ni en textos de la interfaz, ni en nombres de variables o mensajes de test. Este repo es público.
+
+**Validación inmediata.** La acción `verifyPin` solo valida y responde, no escribe nada. El cliente la usa para rechazar un PIN equivocado **en el momento en que se ingresa**, en vez de aceptarlo y que falle recién al guardar. Un PIN que no valida no se guarda en el dispositivo.
+
+**Bloqueo por intentos fallidos.** 5 fallos → `code:'bloqueado'` durante 15 minutos. El contador va **por `staffId`, no por dispositivo** (si no, cambiar de navegador reseteaba el límite). Se lleva en **`CacheService`, no `PropertiesService`**: el cache expira solo, así que el bloqueo se levanta sin que nadie intervenga — con Properties habría que limpiarlo a mano y un profe podría quedar trabado un domingo a la noche. Un PIN correcto limpia el contador.
+
+El mensaje de error dice solo "PIN incorrecto", **nunca** si el problema es el PIN o el usuario: distinguirlos le confirmaría a quien prueba cuál de los dos acertó.
 
 El PIN se agrega en `postToScript()` **en el momento del envío**, nunca dentro del payload que se encola: un item que quedó en la cola tiene que subir con el PIN vigente, no con el que había cuando se encoló.
 
-> Alcance real: 4 dígitos frenan al curioso, no a alguien decidido (viaja en el body y son 10.000 combinaciones). Para el caso de uso del club alcanza. Si hiciera falta más, el camino es deployar el Web App como "Solo usuarios de mi dominio" o meter Google Sign-In.
+> Alcance real: 4 dígitos frenan al curioso, no a alguien decidido. El bloqueo de 5 intentos hace inviable probar las 10.000 combinaciones, pero el PIN sigue viajando en el body. Para el caso de uso del club alcanza. Si hiciera falta más, el camino es deployar el Web App como "Solo usuarios de mi dominio" o meter Google Sign-In.
 
 ## REGLA CRÍTICA 2: versión del Service Worker
 
@@ -156,12 +164,13 @@ Las dos apps viven en el mismo origen de GitHub Pages, así que comparten `local
 | GET | `getAllAttendance[&desde=&hasta=]` | Registros del rango (sin params: todo) | ambas (reportes) |
 | GET | `getPlayers` | Lista de jugadores (con `id` y `activo`) | ambas |
 | GET | `getStaff` | Cuerpo técnico habilitado (**nunca el PIN**) | ambas |
+| POST | `verifyPin` | Valida el PIN y responde. **No escribe nada** | **solo carga** |
 | POST | `saveAttendance` | Guarda asistencia (`overwrite:true` reemplaza el día) | **solo carga** |
 | POST | `addPlayer` | Agrega jugador nuevo | **solo carga** |
 | POST | `setPlayerActivo` | Activa/desactiva jugador | **solo carga** |
 | POST | `renamePlayer` | Renombra jugador | **solo carga** |
 
-**Todos los POST requieren `staffId` + `pin`** en el body. Sin eso, `doPost` responde `{status:'error', code:'no-autorizado'}` sin tocar nada.
+**Todos los POST requieren `staffId` + `pin`** en el body, `verifyPin` incluido. Sin eso, `doPost` responde `{status:'error', code:'no-autorizado', restantes:N}` sin tocar nada, o `code:'bloqueado'` si ya se pasó de 5 fallos.
 
 `desde`/`hasta` son `YYYY-MM-DD` y se comparan como **strings ya normalizados** con `normalizeFecha()`. Nunca compares con `new Date(celda)`: es el bug que tenía el viejo `getReportsData` (borrado), que corría el día según la zona horaria.
 
@@ -179,7 +188,7 @@ Las cuatro mutaciones corren dentro de `conLock()` (`LockService`, `waitLock(200
 
 **CuerpoTecnico**: `Nombre | Cargo | Habilitado | ID | PIN`
 
-> ⚠️ La columna **E (PIN)** no se devuelve **nunca** por GET, y no hay que agregarla a `getStaffData()`. Se lee solo dentro de `staffAutorizado()`. Un profe sin PIN cargado no puede escribir: si se deploya con la columna vacía, **nadie puede cargar asistencia**.
+> ⚠️ La columna **E (PIN)** no se devuelve **nunca** por GET, y no hay que agregarla a `getStaffData()`. Se lee solo dentro de `pinValido()`. Un profe sin PIN cargado no puede escribir: si se deploya con la columna vacía, **nadie puede cargar asistencia**.
 
 Los IDs se autogeneran del lado GAS si faltan (backfill en `getPlayersData` / `getStaffData`).
 
@@ -270,7 +279,7 @@ CHROME_PATH="/c/Program Files/Google/Chrome/Application/chrome.exe" node _test/r
 
 `run.js` corre dos cosas:
 
-1. **`_test/apps-script.test.js`** — ejecuta las funciones reales de `apps_script.js` contra un Google Sheets simulado. Cubre lo que el navegador no puede tocar: `overwrite` sin duplicados, filas del esquema viejo (más cortas), guardado sin registros, fechas que Sheets devuelve como `Date`, el filtro `desde`/`hasta`, y `staffAutorizado`. También corre solo: `node _test/apps-script.test.js`.
+1. **`_test/apps-script.test.js`** — ejecuta las funciones reales de `apps_script.js` contra un Google Sheets simulado. Cubre lo que el navegador no puede tocar: `overwrite` sin duplicados, filas del esquema viejo (más cortas), guardado sin registros, fechas que Sheets devuelve como `Date`, el filtro `desde`/`hasta`, y `pinValido`. También corre solo: `node _test/apps-script.test.js`.
 2. **La suite de humo en el navegador** sobre las dos apps.
 
 Verifica, entre otras cosas, que **los reportes de las dos apps sean idénticos**, que la app de consulta no mande ni un solo POST, que un nombre o una observación con HTML no ejecute nada (`window.__xss` queda `undefined`), que un error del servidor se vea como error, y que **`getStaff` no devuelva el campo `pin`**.

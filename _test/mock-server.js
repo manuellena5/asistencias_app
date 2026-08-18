@@ -34,13 +34,22 @@ const STAFF = [
 // s2 no tiene PIN cargado => no puede escribir.
 const STAFF_PINS = { s1: '1234' };
 
-function staffAutorizado(staffId, pin) {
+function pinValido(staffId, pin) {
   if (!staffId || !pin) return false;
   const s = STAFF.find(x => x.id === staffId);
   if (!s || !s.habilitado) return false;
   const esperado = STAFF_PINS[staffId];
   return !!esperado && esperado === pin.toString().trim();
 }
+
+// Contador de intentos fallidos por staffId, equivalente al CacheService del
+// Apps Script real. Acá no expira: la suite lo limpia con ?action=__reset para
+// que los tests no dependan del orden en que corren.
+const MAX_INTENTOS = 5;
+const fallos = {};
+function estaBloqueado(staffId) { return (fallos[staffId] || 0) >= MAX_INTENTOS; }
+function registrarFallo(staffId) { fallos[staffId] = (fallos[staffId] || 0) + 1; return fallos[staffId]; }
+function limpiarFallos(staffId) { delete fallos[staffId]; }
 
 // Las fechas se generan relativas a hoy en _test/fixtures.js, compartido con
 // run.js: unas dentro de los últimos 30 días y otras repartidas hacia atrás,
@@ -74,6 +83,12 @@ function json(res, out) {
 // los dos endpoints es solo cómo contestan los POST.
 function handleGet(u) {
   const action = u.searchParams.get('action');
+  // Solo para la suite: limpia el contador de intentos fallidos, así los
+  // checks del bloqueo no dependen del orden en que corren.
+  if (action === '__reset') {
+    Object.keys(fallos).forEach(k => delete fallos[k]);
+    return { status: 'success', message: 'contadores limpios' };
+  }
   if (action === 'getPlayers') return { status: 'success', count: PLAYERS.length, players: PLAYERS };
   if (action === 'getStaff') return { status: 'success', count: STAFF.length, staff: STAFF };
   if (action === 'getAttendanceDates') return { status: 'success', dates: FECHAS.slice().sort() };
@@ -112,13 +127,25 @@ http.createServer((req, res) => {
         }
         let data = {};
         try { data = JSON.parse(body); } catch (e) { }
-        if (!staffAutorizado(data.staffId, data.pin)) {
+        // Misma puerta de entrada que doPost: aplica a verifyPin y a las 4
+        // acciones de escritura.
+        if (estaBloqueado(data.staffId)) {
+          return json(res, {
+            status: 'error',
+            code: 'bloqueado',
+            message: 'Demasiados intentos fallidos. Esperá 15 minutos y volvé a probar.'
+          });
+        }
+        if (!pinValido(data.staffId, data.pin)) {
+          const n = registrarFallo(data.staffId);
           return json(res, {
             status: 'error',
             code: 'no-autorizado',
-            message: 'PIN incorrecto o usuario no habilitado para cargar.'
+            restantes: Math.max(0, MAX_INTENTOS - n),
+            message: 'PIN incorrecto.'
           });
         }
+        limpiarFallos(data.staffId);
         json(res, { status: 'success' });
       });
       return;

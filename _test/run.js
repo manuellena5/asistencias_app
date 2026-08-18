@@ -14,9 +14,16 @@ const XSS_NOMBRE = 'DIAZ JONATAN <img src=# onerror="window.__xss=1">';
 
 const errors = [];
 const fails = [];
-function attach(page, tag) {
+// ignorarRed=true para la página donde cortamos la conexión a propósito: ahí
+// un fetch fallido es exactamente lo que estamos probando, no un error.
+function attach(page, tag, ignorarRed) {
+  const esFalloDeRed = t => /net::ERR_|Failed to fetch|Failed to load resource/.test(t);
   page.on('pageerror', e => errors.push(`[${tag}] pageerror: ${e.message}`));
-  page.on('console', m => { if (m.type() === 'error') errors.push(`[${tag}] console.error: ${m.text()}`); });
+  page.on('console', m => {
+    if (m.type() !== 'error') return;
+    if (ignorarRed && esFalloDeRed(m.text())) return;
+    errors.push(`[${tag}] console.error: ${m.text()}`);
+  });
   page.on('response', r => { if (r.status() >= 400) errors.push(`[${tag}] HTTP ${r.status()} ${r.url()}`); });
 }
 function check(label, actual, expected) {
@@ -228,16 +235,38 @@ async function walkReports(page) {
   await q.waitForTimeout(200);
   // Paso 2: sin PIN el picker no deja pasar
   check('picker: pide el PIN después del nombre', await q.isVisible('#staff-pin-step'), true);
+  // Aserción en positivo: el texto dice a quién pedirle el PIN y nada más.
+  // (Que no mencione de dónde salen los dígitos lo verifica el scan de todo el
+  // repo en apps-script.test.js.)
+  check('picker: el texto del PIN solo dice a quién pedírselo',
+    (await q.textContent('#staff-picker-msg')).includes('Te lo da el encargado de la planilla'), true);
+
+  // Formato inválido: se corta en el cliente, sin pegarle al servidor
   await q.fill('#staff-pin-input', '12');
-  await q.click('#staff-pin-step .btn-primary');
+  await q.click('#staff-pin-confirm');
   await q.waitForTimeout(200);
   check('picker: rechaza un PIN que no son 4 dígitos', await q.isVisible('#staff-picker-overlay'), true);
-  check('picker: no guarda un PIN inválido',
+
+  // PIN con formato válido pero equivocado: lo rechaza el SERVIDOR, al
+  // ingresarlo. No se acepta ni queda guardado en el dispositivo.
+  await q.fill('#staff-pin-input', '9999');
+  await q.click('#staff-pin-confirm');
+  await q.waitForTimeout(800);
+  check('picker: un PIN equivocado no cierra el modal', await q.isVisible('#staff-picker-overlay'), true);
+  check('picker: un PIN equivocado muestra el error', await q.isVisible('#staff-pin-error'), true);
+  check('picker: el error no distingue PIN de usuario',
+    (await q.textContent('#staff-pin-error')).trim(), 'PIN incorrecto.');
+  check('picker: el campo se limpia después de fallar',
+    await q.inputValue('#staff-pin-input'), '');
+  check('picker: un PIN equivocado NO se guarda en el dispositivo',
     await q.evaluate(() => localStorage.getItem('club_staff_pin')), null);
+
   await q.fill('#staff-pin-input', '1234');
-  await q.click('#staff-pin-step .btn-primary');
-  await q.waitForTimeout(300);
-  check('picker: se cierra con nombre + PIN', await q.isVisible('#staff-picker-overlay'), false);
+  await q.click('#staff-pin-confirm');
+  await q.waitForTimeout(800);
+  check('picker: se cierra con nombre + PIN correcto', await q.isVisible('#staff-picker-overlay'), false);
+  check('picker: el PIN correcto sí se guarda',
+    await q.evaluate(() => localStorage.getItem('club_staff_pin')), '1234');
 
   // >>> Los reportes tienen que estar acá y ser IGUALES a los del lector <<<
   await q.click('.nav button:nth-child(2)');
@@ -342,6 +371,69 @@ async function walkReports(page) {
     data: JSON.stringify({ action: 'saveAttendance', staffId: 's2', pin: '9999', data: [], overwrite: true })
   })).json();
   check('POST de un profe sin PIN en la hoja: rechazado', s2.code, 'no-autorizado');
+
+  // ===== Bloqueo después de 5 intentos fallidos =====
+  // Se usa GOMEZ CARLOS (s2), que no tiene PIN en la hoja, para no ensuciar el
+  // contador de s1 que usan los demás checks.
+  await ctx.request.get(BASE + '/exec?action=__reset');
+  const blkCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await blkCtx.addInitScript(() => {
+    localStorage.setItem('club_script_url', 'http://localhost:8099/exec');
+  });
+  const b = await blkCtx.newPage();
+  attach(b, 'carga-bloqueo');
+  await b.goto(BASE + '/carga.html');
+  await b.waitForSelector('#boot-overlay', { state: 'detached', timeout: 20000 });
+  await b.click('#staff-picker-list button:nth-child(2)'); // GOMEZ CARLOS (s2)
+  await b.waitForSelector('#staff-pin-step', { state: 'visible', timeout: 5000 });
+
+  const mensajes = [];
+  for (let i = 1; i <= 5; i++) {
+    await b.fill('#staff-pin-input', '000' + i);
+    await b.click('#staff-pin-confirm');
+    await b.waitForTimeout(500);
+    mensajes.push((await b.textContent('#staff-pin-error')).trim());
+  }
+  check('bloqueo: avisa los intentos restantes recién sobre el final',
+    mensajes.map(m => m.includes('intento')), [false, false, true, true, false]);
+  check('bloqueo: el 4º fallo avisa que quedan 2', mensajes[2], 'PIN incorrecto. Te quedan 2 intentos.');
+  check('bloqueo: el 5º fallo avisa que queda 1', mensajes[3], 'PIN incorrecto. Te queda 1 intento.');
+
+  // El 6º intento ya cae en el bloqueo del servidor
+  await b.fill('#staff-pin-input', '4321');
+  await b.click('#staff-pin-confirm');
+  await b.waitForTimeout(600);
+  check('bloqueo: tras 5 fallos el servidor responde bloqueado',
+    (await b.textContent('#staff-pin-error')).includes('Demasiados intentos'), true);
+  check('bloqueo: el botón de confirmar queda deshabilitado',
+    await b.isDisabled('#staff-pin-confirm'), true);
+  check('bloqueo: nada quedó guardado',
+    await b.evaluate(() => localStorage.getItem('club_staff_pin')), null);
+  await blkCtx.close();
+  await ctx.request.get(BASE + '/exec?action=__reset');
+
+  // ===== Sin conexión al configurar: no dejar trabado al profe =====
+  const offCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await offCtx.addInitScript(() => {
+    localStorage.setItem('club_script_url', 'http://localhost:8099/exec');
+  });
+  const o = await offCtx.newPage();
+  attach(o, 'carga-offline', true);
+  await o.goto(BASE + '/carga.html');
+  await o.waitForSelector('#boot-overlay', { state: 'detached', timeout: 20000 });
+  await o.click('#staff-picker-list button');
+  await o.waitForSelector('#staff-pin-step', { state: 'visible', timeout: 5000 });
+  // Cortar la red recién ahora: el picker ya está armado con la lista
+  await offCtx.setOffline(true);
+  await o.fill('#staff-pin-input', '1234');
+  await o.click('#staff-pin-confirm');
+  await o.waitForTimeout(1000);
+  check('sin conexión: el picker igual deja configurar',
+    await o.isVisible('#staff-picker-overlay'), false);
+  check('sin conexión: el PIN se guarda para validarlo al primer guardado',
+    await o.evaluate(() => localStorage.getItem('club_staff_pin')), '1234');
+  await offCtx.setOffline(false);
+  await offCtx.close();
 
   // ===== PIN incorrecto desde la app: no se pierde lo cargado =====
   const pinCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });

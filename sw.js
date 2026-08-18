@@ -7,7 +7,7 @@
 // El SW es cache-first: sin cambiar la versión, los usuarios con
 // la PWA instalada siguen viendo la versión vieja para siempre.
 // ============================================================
-const CACHE_NAME = 'asistencias-v36';
+const CACHE_NAME = 'asistencias-v37';
 
 const CACHED_URLS = [
   './index.html',

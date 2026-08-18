@@ -1,7 +1,7 @@
 // Corre las funciones de apps_script.js contra un Google Sheets simulado.
 // No reemplaza probar en la planilla real, pero cubre lo que la suite del
 // navegador no puede tocar: el reescrito en lote de saveAttendanceData
-// (filas parejas, overwrite, hoja vacia) y staffAutorizado.
+// (filas parejas, overwrite, hoja vacia) y pinValido.
 //
 //   node _test/apps-script.test.js
 // run.js tambien lo invoca, asi que con `node _test/run.js` alcanza.
@@ -74,13 +74,28 @@ function cargar(hojas) {
       }
     },
     ContentService: { createTextOutput: t => ({ setMimeType: () => t }), MimeType: { JSON: 'json' } },
-    Logger: { log: () => { } }
+    Logger: { log: () => { } },
+    // CacheService simulado. Guarda el TTL para poder verificar que el bloqueo
+    // se pone con expiración (que es lo que hace que se levante solo).
+    CacheService: (() => {
+      const store = {};
+      const cache = {
+        get: k => (store[k] === undefined ? null : store[k].v),
+        put: (k, v, ttl) => { store[k] = { v: v, ttl: ttl }; },
+        remove: k => { delete store[k]; }
+      };
+      return { getScriptCache: () => cache, _store: store };
+    })()
   };
   const fn = new Function(
-    'SpreadsheetApp', 'LockService', 'Utilities', 'ContentService', 'Logger',
-    SRC + '\nreturn {saveAttendanceData,getAllAttendanceData,getStaffData,staffAutorizado,ATTENDANCE_HEADER};'
+    'SpreadsheetApp', 'LockService', 'Utilities', 'ContentService', 'Logger', 'CacheService',
+    SRC + '\nreturn {saveAttendanceData,getAllAttendanceData,getStaffData,pinValido,' +
+    'estadoBloqueo,registrarFallo,limpiarFallos,MAX_INTENTOS,BLOQUEO_SEG,ATTENDANCE_HEADER};'
   );
-  return fn(stubs.SpreadsheetApp, stubs.LockService, stubs.Utilities, stubs.ContentService, stubs.Logger);
+  const api = fn(stubs.SpreadsheetApp, stubs.LockService, stubs.Utilities,
+    stubs.ContentService, stubs.Logger, stubs.CacheService);
+  api._cacheStore = stubs.CacheService._store;
+  return api;
 }
 
 function registros(fecha, jugadores) {
@@ -207,7 +222,7 @@ console.log('\n=== apps_script.js (Sheets simulado) ===');
     gas.getAllAttendanceData('2027-01-01', '').data.length, 0);
 }
 
-// ---------- staffAutorizado / getStaffData ----------
+// ---------- pinValido / getStaffData ----------
 {
   const hojas = {
     CuerpoTecnico: nuevaHoja([
@@ -218,19 +233,77 @@ console.log('\n=== apps_script.js (Sheets simulado) ===');
     ])
   };
   const gas = cargar(hojas);
-  check('PIN correcto autoriza', gas.staffAutorizado('s1', '1234'), true);
-  check('PIN incorrecto no autoriza', gas.staffAutorizado('s1', '9999'), false);
-  check('sin PIN en la hoja no autoriza (no hay modo permisivo)', gas.staffAutorizado('s2', '1234'), false);
-  check('deshabilitado no autoriza aunque el PIN sea correcto', gas.staffAutorizado('s3', '5678'), false);
-  check('staffId inexistente no autoriza', gas.staffAutorizado('sX', '1234'), false);
-  check('sin staffId ni pin no autoriza', gas.staffAutorizado('', ''), false);
+  check('PIN correcto autoriza', gas.pinValido('s1', '1234'), true);
+  check('PIN incorrecto no autoriza', gas.pinValido('s1', '9999'), false);
+  check('sin PIN en la hoja no autoriza (no hay modo permisivo)', gas.pinValido('s2', '1234'), false);
+  check('deshabilitado no autoriza aunque el PIN sea correcto', gas.pinValido('s3', '5678'), false);
+  check('staffId inexistente no autoriza', gas.pinValido('sX', '1234'), false);
+  check('sin staffId ni pin no autoriza', gas.pinValido('', ''), false);
   check('PIN numerico (Sheets lo devuelve como number) igual matchea',
-    gas.staffAutorizado('s1', 1234), true);
+    gas.pinValido('s1', 1234), true);
 
   // EL check critico: getStaff es un GET publico
   const staff = gas.getStaffData();
   check('getStaff no expone el PIN', JSON.stringify(staff).includes('1234'), false);
   check('getStaff no tiene campo pin', staff.staff.some(s => 'pin' in s), false);
+}
+
+// ---------- bloqueo por intentos fallidos ----------
+{
+  const gas = cargar({});
+  check('arranca sin bloqueo', gas.estadoBloqueo('s1'), { intentos: 0, bloqueado: false });
+
+  for (let i = 1; i < gas.MAX_INTENTOS; i++) gas.registrarFallo('s1');
+  check(`${gas.MAX_INTENTOS - 1} fallos todavia no bloquean`, gas.estadoBloqueo('s1').bloqueado, false);
+
+  gas.registrarFallo('s1');
+  check(`${gas.MAX_INTENTOS} fallos bloquean`, gas.estadoBloqueo('s1').bloqueado, true);
+
+  // El bloqueo tiene que expirar solo: con PropertiesService habria que
+  // limpiarlo a mano y un profe podria quedar trabado sin nadie a quien llamar.
+  check('el bloqueo se guarda con expiracion (se levanta solo)',
+    gas._cacheStore['pinfail_s1'].ttl, gas.BLOQUEO_SEG);
+  check('la ventana del bloqueo es de 15 minutos', gas.BLOQUEO_SEG, 15 * 60);
+
+  gas.limpiarFallos('s1');
+  check('un PIN correcto limpia el contador', gas.estadoBloqueo('s1').bloqueado, false);
+
+  // El contador va por staffId, no global
+  gas.registrarFallo('s1');
+  check('el contador es por staffId, no compartido', gas.estadoBloqueo('s2').intentos, 0);
+
+  // Sin staffId no explota (un POST vacio no tiene que tirar excepcion)
+  check('sin staffId no rompe', gas.estadoBloqueo('').bloqueado, false);
+  check('registrarFallo sin staffId no rompe', gas.registrarFallo(''), 0);
+}
+
+// ---------- ninguna referencia al origen del PIN ----------
+{
+  const raiz = path.join(__dirname, '..');
+  const archivos = [];
+  (function recorrer(dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+      if (e.name === 'node_modules' || e.name === '.git') return;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) recorrer(p);
+      else if (/\.(js|html|md|json|css|svg)$/.test(e.name)) archivos.push(p);
+    });
+  })(raiz);
+
+  // Los terminos se arman en tiempo de ejecucion a proposito: si estuvieran
+  // escritos literalmente, este archivo seria el mismo una de las menciones
+  // que el check busca evitar.
+  const TERMINOS = [
+    [100, 110, 105],                                                   // el documento
+    [100, 111, 99, 117, 109, 101, 110, 116, 111, 32, 100, 101, 32, 105, 100, 101, 110, 116, 105, 100, 97, 100]
+  ].map(cs => String.fromCharCode.apply(null, cs));
+  const re = new RegExp('\\b(' + TERMINOS.join('|') + ')\\b', 'i');
+
+  const sospechosos = archivos.filter(f => re.test(fs.readFileSync(f, 'utf8')))
+    .map(f => path.relative(raiz, f));
+
+  check('ningun archivo del repo menciona de donde salen los digitos del PIN',
+    sospechosos, []);
 }
 
 console.log(fails.length ? '\nCHECKS FALLIDOS:\n  ✗ ' + fails.join('\n  ✗ ') : '  todos los checks ✓');
