@@ -55,10 +55,52 @@ let cachedDateData = {};
 let loadedDates = new Set();
 
 // Reportes
-let rawAllDays = [];  // todos los días traídos del servidor, sin filtrar por torneo
-let allDays = [];     // subset filtrado por torneo, usado por los reportes
+// El servidor ya filtra por rango, así que allDays es directamente lo que vino.
+let allDays = [];
 let allObs = {};
-let torneoFilter = localStorage.getItem('club_torneo_filter') || 'clausura';
+
+// Rango de fechas que muestran los reportes. Traer todo el historial en cada
+// apertura era una descarga grande y un parseo pesado en el celular para
+// mostrar una semana.
+const RANGO_LABEL = {
+  '30': 'últimos 30 días',
+  '90': 'últimos 90 días',
+  'torneo': 'el torneo',
+  'todos': 'todo el historial'
+};
+// Orden de "ampliar historial" cuando el usuario se sale del rango cargado.
+// 'torneo' queda afuera a propósito: su ancho depende de la fecha de hoy.
+const RANGO_SIGUIENTE = { '30': '90', '90': 'todos' };
+
+let rangoReportes = migrarRangoGuardado();
+
+// Antes esta clave guardaba el filtro de torneo (apertura/clausura/todos).
+// Se migra para no romperle la vista a quien ya lo tenga guardado.
+function migrarRangoGuardado() {
+  const v = localStorage.getItem('club_rango_reportes');
+  if (v && RANGO_LABEL.hasOwnProperty(v)) return v;
+  const viejo = localStorage.getItem('club_torneo_filter');
+  if (viejo === 'clausura' || viejo === 'apertura') return 'torneo';
+  if (viejo === 'todos') return 'todos';
+  return '30';
+}
+
+// Fecha local en 'YYYY-MM-DD' (misma razón que todayStr: nada de toISOString).
+function dateStr(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
+// Traduce el rango elegido a los parámetros desde/hasta del Apps Script.
+// Cadena vacía = sin límite por ese lado.
+function rangoDesdeHasta(rango) {
+  if (rango === 'todos') return { desde: '', hasta: '' };
+  if (rango === 'torneo') return { desde: TORNEO_CUTOFF, hasta: '' };
+  const dias = rango === '90' ? 90 : 30;
+  const d = new Date();
+  d.setDate(d.getDate() - (dias - 1));
+  return { desde: dateStr(d), hasta: '' };
+}
 
 // Hook: carga.html lo reemplaza por hasPendingSaveFor para no pisar un guardado
 // local que todavía no subió a Sheets. En el lector siempre es false porque
@@ -161,15 +203,36 @@ async function fetchAttendanceForDate(fecha) {
   return records;
 }
 
-// Trae TODO el historial y lo agrupa por fecha en rawAllDays / allObs.
-// Devuelve {ok:true} o {ok:false, error}.
-async function fetchAllAttendance() {
-  rawAllDays = [];
+// Caché por rango: {rango: {days, obs}}. Si el usuario va de "30 días" a
+// "Todo" y vuelve, no se refetchea. invalidateReports() lo limpia ENTERO.
+let reportsCache = {};
+function clearReportsCache() { reportsCache = {}; }
+
+// Trae el historial del rango pedido y lo agrupa por fecha en allDays/allObs.
+// Devuelve {ok:true, cached:bool} o {ok:false, error}.
+async function fetchAllAttendance(rango) {
+  const r0 = rango || rangoReportes;
+
+  if (reportsCache[r0]) {
+    allDays = reportsCache[r0].days;
+    allObs = reportsCache[r0].obs;
+    return { ok: true, cached: true };
+  }
+
+  allDays = [];
   allObs = {};
   if (!scriptUrl) return { ok: false, error: 'sin-url' };
+
+  const { desde, hasta } = rangoDesdeHasta(r0);
+  let url = scriptUrl + '?action=getAllAttendance';
+  if (desde) url += '&desde=' + encodeURIComponent(desde);
+  if (hasta) url += '&hasta=' + encodeURIComponent(hasta);
+
   try {
-    const r = await fetch(scriptUrl + '?action=getAllAttendance');
+    const r = await fetch(url);
     const j = await r.json();
+    const days = [];
+    const obs = {};
     if (j.status === 'success' && j.data) {
       const byDate = {};
       j.data.forEach(rec => {
@@ -178,28 +241,22 @@ async function fetchAllAttendance() {
         if (!byDate[rec.fecha]) byDate[rec.fecha] = {};
         byDate[rec.fecha][key] = rec.estado;
         if (rec.estado === 'J' && rec.observacion) {
-          if (!allObs[rec.fecha]) allObs[rec.fecha] = {};
-          allObs[rec.fecha][key] = rec.observacion;
+          if (!obs[rec.fecha]) obs[rec.fecha] = {};
+          obs[rec.fecha][key] = rec.observacion;
         }
       });
       for (const [date, pmap] of Object.entries(byDate)) {
-        rawAllDays.push({ date, players: pmap });
+        days.push({ date, players: pmap });
       }
     }
-    rawAllDays.sort((a, b) => a.date.localeCompare(b.date));
-    return { ok: true };
+    days.sort((a, b) => a.date.localeCompare(b.date));
+    reportsCache[r0] = { days, obs };
+    allDays = days;
+    allObs = obs;
+    return { ok: true, cached: false };
   } catch (e) {
     return { ok: false, error: e.message };
   }
-}
-
-// ======================== FILTRO DE TORNEO ========================
-function applyTorneoFilterData() {
-  allDays = rawAllDays.filter(d => {
-    if (torneoFilter === 'todos') return true;
-    if (torneoFilter === 'clausura') return d.date >= TORNEO_CUTOFF;
-    return d.date < TORNEO_CUTOFF; // apertura
-  });
 }
 
 // ======================== RESOLUCIÓN DE NOMBRES ========================

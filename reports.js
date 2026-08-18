@@ -6,8 +6,8 @@
    diferencia entre ellas es quién puede escribir, no quién puede
    mirar. Por eso esto vive en un solo archivo.
 
-   Depende de common.js (allDays, rawAllDays, allObs, players,
-   inactiveSet, torneoFilter, displayName, formatters...).
+   Depende de common.js (allDays, allObs, players, inactiveSet,
+   rangoReportes, displayName, formatters...).
    Solo lee: no hace ni un POST.
 
    Uso desde cada app:
@@ -29,11 +29,12 @@ function initReportsScreen() {
   const scr = document.getElementById('scr-reports');
   if (!scr) return;
   scr.innerHTML = `
-    <div class="pills-row" id="torneo-filter-row">
+    <div class="pills-row" id="rango-row">
       <div class="pills">
-        <button class="pill" data-t="apertura" onclick="setTorneoFilter('apertura',this)">Apertura</button>
-        <button class="pill active" data-t="clausura" onclick="setTorneoFilter('clausura',this)">Clausura</button>
-        <button class="pill" data-t="todos" onclick="setTorneoFilter('todos',this)">Todo</button>
+        <button class="pill" data-r="30" onclick="setRango('30',this)">30 días</button>
+        <button class="pill" data-r="90" onclick="setRango('90',this)">90 días</button>
+        <button class="pill" data-r="torneo" onclick="setRango('torneo',this)">Torneo</button>
+        <button class="pill" data-r="todos" onclick="setRango('todos',this)">Todo</button>
       </div>
     </div>
     <div class="report-tabs">
@@ -50,8 +51,11 @@ function initReportsScreen() {
 // Marcar los reportes como "hay que volver a traerlos". Lo llama carga.html
 // después de guardar una asistencia, para que al entrar a Reportes se vea
 // lo recién cargado y no la foto vieja.
+// Limpia el caché de TODOS los rangos, no solo el activo: un guardado nuevo
+// también deja viejo lo que haya cacheado de "90 días" o "Todo".
 function invalidateReports() {
   reportsLoaded = false;
+  clearReportsCache();
 }
 
 function setReport(view, btn) {
@@ -71,9 +75,9 @@ async function loadReports() {
   if (!out) return;
   out.innerHTML = '<div class="loading"><div class="sp"></div>Cargando datos...</div>';
 
-  // Reflejar el filtro de torneo guardado en los botones
-  document.querySelectorAll('#torneo-filter-row .pill').forEach(b => {
-    b.classList.toggle('active', b.dataset.t === torneoFilter);
+  // Reflejar el rango guardado en los botones
+  document.querySelectorAll('#rango-row .pill').forEach(b => {
+    b.classList.toggle('active', b.dataset.r === rangoReportes);
   });
 
   if (!scriptUrl) {
@@ -81,42 +85,50 @@ async function loadReports() {
     return;
   }
 
-  const res = await fetchAllAttendance();
+  const res = await fetchAllAttendance(rangoReportes);
   if (!res.ok) {
     out.innerHTML = `<div class="card" style="padding:20px;text-align:center;color:var(--red)">No se pudieron cargar los datos${res.error && res.error !== 'sin-url' ? ': ' + res.error : ''}.<br><span style="font-size:.8rem;color:var(--gray)">Revisá tu conexión y volvé a intentar.</span></div>`;
     return;
   }
   reportsLoaded = true;
 
-  // Selector de jugador (siempre sobre el set completo, sin filtrar por torneo)
+  // Selector de jugador: los que aparecen en el rango MÁS todos los activos,
+  // para que un jugador sin asistencias en el rango igual aparezca (con 0%).
   const psel = document.getElementById('player-sel');
+  const previo = psel.value;
   psel.innerHTML = '';
   const allP = new Set();
-  rawAllDays.forEach(d => Object.keys(d.players).forEach(p => allP.add(p)));
+  allDays.forEach(d => Object.keys(d.players).forEach(p => allP.add(p)));
   activePlayers().forEach(p => allP.add(p.id));
   [...allP].filter(k => !inactiveSet.has(k))
     .sort((a, b) => displayName(a).localeCompare(displayName(b), 'es', { sensitivity: 'base' }))
     .forEach(k => {
       const o = document.createElement('option'); o.value = k; o.textContent = displayName(k); psel.appendChild(o);
     });
+  // Mantener el jugador elegido al cambiar de rango, si sigue estando
+  if (previo && [...psel.options].some(o => o.value === previo)) psel.value = previo;
 
-  applyTorneoFilter();
-}
-
-// ======================== FILTRO DE TORNEO ========================
-function setTorneoFilter(v, btn) {
-  torneoFilter = v;
-  localStorage.setItem('club_torneo_filter', v);
-  document.querySelectorAll('#torneo-filter-row .pill').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  applyTorneoFilter();
-}
-
-function applyTorneoFilter() {
-  applyTorneoFilterData();
   weekIdx = 0;
   buildPeriodSelector();
   renderReport();
+}
+
+// ======================== RANGO DE FECHAS ========================
+function setRango(v, btn) {
+  if (rangoReportes === v) return;
+  rangoReportes = v;
+  localStorage.setItem('club_rango_reportes', v);
+  document.querySelectorAll('#rango-row .pill').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // loadReports usa el caché por rango: volver a uno ya visto no refetchea.
+  loadReports();
+}
+
+// Amplía el rango cuando el usuario se va más atrás de lo que se trajo.
+function ampliarRango() {
+  const siguiente = RANGO_SIGUIENTE[rangoReportes] || 'todos';
+  const btn = document.querySelector(`#rango-row .pill[data-r="${siguiente}"]`);
+  setRango(siguiente, btn);
 }
 
 function buildPeriodSelector() {
@@ -146,11 +158,25 @@ function setSemanalFilter(mode) { semanalShowAll = (mode === 'full'); renderRepo
 function setSemanalSort(sort) { semanalSortBy = sort; renderReport(); }
 function toggleTotalesSort() { totalesAsc = !totalesAsc; renderReport(); }
 
+// Aviso + botón para traer más historial. Sale cuando el usuario llegó al
+// principio de lo que se trajo y el rango todavía no es "Todo": si no, una
+// semana sin datos se lee como "esa semana no hubo prácticas", cuando en
+// realidad esos días nunca se descargaron.
+function avisoAmpliarHtml() {
+  if (rangoReportes === 'todos') return '';
+  return `<div class="card" style="padding:14px;text-align:center;margin-top:10px">
+    <div style="font-size:.85rem;color:var(--gray);margin-bottom:10px">
+      Estás viendo el principio de ${RANGO_LABEL[rangoReportes]}. Puede haber prácticas más viejas sin traer.
+    </div>
+    <button class="btn btn-sec" id="btn-ampliar-rango" style="margin-top:0" onclick="ampliarRango()">Cargar más historial</button>
+  </div>`;
+}
+
 // ======================== SEMANAL ========================
 function renderWeekly() {
   const out = document.getElementById('report-out');
   const weeks = [...new Set(allDays.map(d => weekKey(d.date)))].sort().reverse();
-  if (!weeks.length) { out.innerHTML = '<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos disponibles.</div>'; return; }
+  if (!weeks.length) { out.innerHTML = `<div class="card" style="padding:20px;text-align:center;color:var(--gray)">No hay datos en ${RANGO_LABEL[rangoReportes]}.${avisoAmpliarHtml()}</div>`; return; }
 
   weekIdx = Math.max(0, Math.min(weekIdx, weeks.length - 1));
   const curWeek = weeks[weekIdx];
@@ -233,6 +259,9 @@ function renderWeekly() {
     });
   }
 
+  // Llegó a la semana más vieja del rango: avisar que puede haber más atrás.
+  if (prevDis) h += avisoAmpliarHtml();
+
   out.innerHTML = h;
 }
 
@@ -260,8 +289,10 @@ function renderTotales() {
 
   const avgPct = sortedP.length ? Math.round(sortedP.reduce((s, p) => s + (att[p] || 0) / total * 100, 0) / sortedP.length) : 0;
 
+  // El encabezado nombra el rango: con "30 días" este ranking es el de esos
+  // 30 días, no el histórico, y nadie tiene que adivinarlo.
   let h = `<div class="card">
-    <div class="card-hdr">Ranking General<span class="badge ${badgeClass(avgPct)}">${avgPct}% prom</span><button class="sort-dir-btn" onclick="toggleTotalesSort()">${totalesAsc ? '↑ Menor primero' : '↓ Mayor primero'}</button></div>
+    <div class="card-hdr">Ranking · ${RANGO_LABEL[rangoReportes]}<span class="badge ${badgeClass(avgPct)}">${avgPct}% prom</span><button class="sort-dir-btn" onclick="toggleTotalesSort()">${totalesAsc ? '↑ Menor primero' : '↓ Mayor primero'}</button></div>
     <div class="stats">
       <div class="stat"><div class="n">${total}</div><div class="l">Prácticas</div></div>
       <div class="stat"><div class="n">${sortedP.length}</div><div class="l">Jugadores</div></div>

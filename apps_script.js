@@ -73,7 +73,7 @@ function doGet(e) {
         response = getPlayersData();
         break;
       case 'getAllAttendance':
-        response = getAllAttendanceData();
+        response = getAllAttendanceData(e.parameter.desde, e.parameter.hasta);
         break;
       case 'getAttendanceDates':
         response = getAttendanceDatesData();
@@ -537,9 +537,17 @@ function getAttendanceDatesData() {
 }
 
 /**
- * Get ALL attendance records (used by the web app for reports)
+ * Get attendance records for the reports screen.
+ *
+ * desde / hasta son opcionales, en formato 'YYYY-MM-DD'. Sin parametros
+ * devuelve todo el historial (asi el modo "Todo" sigue funcionando igual).
+ *
+ * El filtro compara STRINGS ya normalizados con normalizeFecha(), no objetos
+ * Date: 'YYYY-MM-DD' ordena igual como string que como fecha, y asi no se
+ * repite el bug del viejo getReportsData, que hacia new Date(celda) y corria
+ * el dia segun la zona horaria.
  */
-function getAllAttendanceData() {
+function getAllAttendanceData(desde, hasta) {
   try {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     const sheet = spreadsheet.getSheetByName(ATTENDANCE_SHEET_NAME);
@@ -548,15 +556,21 @@ function getAllAttendanceData() {
       return { status: 'success', data: [] };
     }
 
+    const d = (desde || '').toString().trim();
+    const h = (hasta || '').toString().trim();
+
     const values = sheet.getDataRange().getValues();
     const records = [];
 
     // Skip header row
     for (let i = 1; i < values.length; i++) {
       if (!values[i][0]) continue; // skip empty rows
+      const fecha = normalizeFecha(values[i][1]);
+      if (d && fecha < d) continue;
+      if (h && fecha > h) continue;
       records.push({
         timestamp:   values[i][0] ? values[i][0].toString() : '',
-        fecha:       normalizeFecha(values[i][1]),
+        fecha:       fecha,
         jugador:     values[i][2] || '',
         estado:      values[i][3] || '',
         observacion: values[i][4] || '',
@@ -569,6 +583,8 @@ function getAllAttendanceData() {
     return {
       status: 'success',
       count: records.length,
+      desde: d,
+      hasta: h,
       data: records
     };
   } catch (error) {

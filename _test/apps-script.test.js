@@ -175,6 +175,38 @@ console.log('\n=== apps_script.js (Sheets simulado) ===');
   check('overwrite con Date deja el estado nuevo', hojas.Asistencias_App._v[1][3], 'J');
 }
 
+// ---------- getAllAttendanceData: rango desde/hasta ----------
+{
+  const HDR = ['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID', 'CargadoPorNombre', 'CargadoPorID'];
+  const fila = (f, jug) => ['2026T20:00', f, jug, 'P', '', 'p1', 'PEREZ JUAN', 's1'];
+  const hojas = {
+    Asistencias_App: nuevaHoja([
+      HDR,
+      fila('2026-03-10', 'A'),
+      fila('2026-07-14', 'A'),
+      fila(new Date(2026, 7, 4), 'A'),   // Sheets devuelve Date: 2026-08-04
+      fila('2026-08-18', 'A')
+    ])
+  };
+  const gas = cargar(hojas);
+  const fechas = r => r.data.map(x => x.fecha);
+
+  check('sin parametros devuelve todo', fechas(gas.getAllAttendanceData()),
+    ['2026-03-10', '2026-07-14', '2026-08-04', '2026-08-18']);
+  check('desde filtra por fecha', fechas(gas.getAllAttendanceData('2026-07-01', '')),
+    ['2026-07-14', '2026-08-04', '2026-08-18']);
+  check('hasta filtra por fecha', fechas(gas.getAllAttendanceData('', '2026-07-14')),
+    ['2026-03-10', '2026-07-14']);
+  check('desde y hasta juntos', fechas(gas.getAllAttendanceData('2026-07-01', '2026-08-04')),
+    ['2026-07-14', '2026-08-04']);
+  check('el borde desde es inclusivo', fechas(gas.getAllAttendanceData('2026-08-18', '')),
+    ['2026-08-18']);
+  check('el filtro usa normalizeFecha, no new Date (celda Date incluida)',
+    fechas(gas.getAllAttendanceData('2026-08-04', '2026-08-04')), ['2026-08-04']);
+  check('rango sin datos devuelve vacio, no error',
+    gas.getAllAttendanceData('2027-01-01', '').data.length, 0);
+}
+
 // ---------- staffAutorizado / getStaffData ----------
 {
   const hojas = {

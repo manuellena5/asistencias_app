@@ -42,7 +42,14 @@ function staffAutorizado(staffId, pin) {
   return !!esperado && esperado === pin.toString().trim();
 }
 
-const FECHAS = ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18'];
+const FECHAS_RECIENTES = ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18'];
+// Fechas repartidas en ~6 meses, para probar el rango de reportes. Van al
+// FINAL del array a propósito: recordsFor() deriva los estados del índice, y
+// así los checks de las fechas recientes no cambian al agregar historial.
+// 2026-03/05/06 son anteriores al TORNEO_CUTOFF (2026-07-01); 2026-07-14 es
+// posterior al corte pero anterior a los últimos 30 días.
+const FECHAS_VIEJAS = ['2026-03-10', '2026-05-12', '2026-06-02', '2026-07-14'];
+const FECHAS = FECHAS_RECIENTES.concat(FECHAS_VIEJAS);
 const ESTADOS = ['P', 'P', 'E/A', 'J', 'A'];
 
 function recordsFor(fecha) {
@@ -73,12 +80,20 @@ function handleGet(u) {
   const action = u.searchParams.get('action');
   if (action === 'getPlayers') return { status: 'success', count: PLAYERS.length, players: PLAYERS };
   if (action === 'getStaff') return { status: 'success', count: STAFF.length, staff: STAFF };
-  if (action === 'getAttendanceDates') return { status: 'success', dates: FECHAS };
+  if (action === 'getAttendanceDates') return { status: 'success', dates: FECHAS.slice().sort() };
   if (action === 'getAttendance') return { status: 'success', data: recordsFor(u.searchParams.get('fecha')) };
   if (action === 'getAllAttendance') {
+    // desde/hasta son opcionales y se comparan como strings 'YYYY-MM-DD',
+    // igual que en el Apps Script real.
+    const desde = (u.searchParams.get('desde') || '').trim();
+    const hasta = (u.searchParams.get('hasta') || '').trim();
     const all = [];
-    FECHAS.forEach(f => all.push(...recordsFor(f)));
-    return { status: 'success', count: all.length, data: all };
+    FECHAS.slice().sort().forEach(f => {
+      if (desde && f < desde) return;
+      if (hasta && f > hasta) return;
+      all.push(...recordsFor(f));
+    });
+    return { status: 'success', count: all.length, desde, hasta, data: all };
   }
   return { status: 'ok' };
 }

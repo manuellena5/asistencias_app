@@ -86,17 +86,83 @@ async function walkReports(page) {
   show('semanal header', repLector.semanal.header);
   show('totales header', repLector.totales.hdr);
 
-  // Filtro de torneo
-  await p.click('#torneo-filter-row .pill[data-t="todos"]');
-  await p.waitForTimeout(400);
-  show('filtro "Todo" -> header', (await p.textContent('.week-nav-info')).replace(/\s+/g, ' ').trim());
-  await p.click('#torneo-filter-row .pill[data-t="clausura"]');
+  // ===== RANGO DE FECHAS =====
+  // Se cuentan las requests reales al backend para verificar el caché por rango.
+  const getAll = [];
+  p.on('request', r => { if (r.url().includes('action=getAllAttendance')) getAll.push(r.url()); });
+
+  const fechasEn = async () => p.evaluate(() => allDays.map(d => d.date));
+  const fechas30 = await fechasEn();
+  check('rango por defecto: 30 días', await p.evaluate(() => rangoReportes), '30');
+  check('30 días: solo trae fechas recientes', fechas30,
+    ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18']);
+
+  await p.click('#rango-row .pill[data-r="todos"]');
+  await p.waitForTimeout(600);
+  const fechasTodo = await fechasEn();
+  check('Todo: trae las 9 fechas', fechasTodo.length, 9);
+  check('30 días es un subconjunto de Todo',
+    fechas30.every(f => fechasTodo.includes(f)), true);
+  check('Todo: la request no lleva desde',
+    getAll[getAll.length - 1].includes('desde='), false);
+
+  await p.click('#rango-row .pill[data-r="torneo"]');
+  await p.waitForTimeout(600);
+  check('Torneo: corta en TORNEO_CUTOFF', await fechasEn(),
+    ['2026-07-14', '2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18']);
+  check('Torneo: la request lleva desde=2026-07-01',
+    getAll[getAll.length - 1].includes('desde=2026-07-01'), true);
+
+  // Volver a un rango ya visto NO debe disparar otra request
+  const antes = getAll.length;
+  await p.click('#rango-row .pill[data-r="todos"]');
+  await p.waitForTimeout(600);
+  await p.click('#rango-row .pill[data-r="30"]');
+  await p.waitForTimeout(600);
+  check('volver a un rango ya visto sale del caché (0 requests nuevas)',
+    getAll.length - antes, 0);
+  check('el rango elegido queda guardado',
+    await p.evaluate(() => localStorage.getItem('club_rango_reportes')), '30');
+
+  // Totales tiene que decir de qué período habla
+  await p.click('.report-tabs button:nth-child(4)');
   await p.waitForTimeout(300);
+  check('Totales nombra el rango en el encabezado',
+    (await p.textContent('#report-out .card-hdr')).includes('últimos 30 días'), true);
+
+  // Semanal: al llegar al principio del rango, aviso en vez de semana vacía
+  await p.click('.report-tabs button:nth-child(1)');
+  await p.waitForTimeout(300);
+  for (let i = 0; i < 6; i++) {
+    const btn = await p.$('.week-nav-btn:not([disabled])');
+    if (!btn) break;
+    await p.click('.week-nav-bar .week-nav-btn:first-child').catch(() => { });
+    await p.waitForTimeout(150);
+    if (await p.$('#btn-ampliar-rango')) break;
+  }
+  check('semanal: al principio del rango aparece "Cargar más historial"',
+    await p.isVisible('#btn-ampliar-rango'), true);
+  check('semanal: el aviso nombra el rango',
+    (await p.textContent('#report-out')).includes('últimos 30 días'), true);
+
+  // El botón amplía el rango y trae más historial
+  const fechasAntes = (await fechasEn()).length;
+  await p.click('#btn-ampliar-rango');
+  await p.waitForTimeout(800);
+  check('"Cargar más historial" amplía el rango a 90 días',
+    await p.evaluate(() => rangoReportes), '90');
+  check('"Cargar más historial" trae más fechas',
+    (await fechasEn()).length > fechasAntes, true);
+
+  // Volver al default para el resto de la suite
+  await p.click('#rango-row .pill[data-r="30"]');
+  await p.waitForTimeout(500);
 
   // Pantalla Por día
   await p.click('.nav button:nth-child(2)');
   await p.waitForTimeout(250);
-  check('día: 5 chips de fechas', await p.$$eval('.date-chip', e => e.length), 5);
+  // El strip muestra los últimos 7 días con datos (el mock tiene 9)
+  check('día: 7 chips de fechas', await p.$$eval('.date-chip', e => e.length), 7);
   await p.click('.date-chip');
   await p.waitForSelector('.ro-row', { timeout: 10000 });
   check('día: 4 filas', await p.$$eval('.ro-row', e => e.length), 4);
