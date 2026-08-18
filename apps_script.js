@@ -38,9 +38,6 @@ function doGet(e) {
       case 'getPlayers':
         response = getPlayersData();
         break;
-      case 'getReports':
-        response = getReportsData(e.parameter.startDate, e.parameter.endDate);
-        break;
       case 'getAllAttendance':
         response = getAllAttendanceData();
         break;
@@ -436,75 +433,6 @@ function renamePlayer(id, newName, oldName) {
       }
     }
     return { status: 'error', message: 'Jugador no encontrado' };
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error.toString()
-    };
-  }
-}
-
-/**
- * Get reports data for a date range
- */
-function getReportsData(startDate, endDate) {
-  try {
-    const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
-    const sheet = spreadsheet.getSheetByName(ATTENDANCE_SHEET_NAME);
-
-    if (!sheet) {
-      return {
-        status: 'success',
-        data: []
-      };
-    }
-
-    const range = sheet.getDataRange();
-    const values = range.getValues();
-    const records = [];
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    // Skip header row
-    for (let i = 1; i < values.length; i++) {
-      const recordDate = new Date(values[i][1]);
-      if (recordDate >= start && recordDate <= end) {
-        records.push({
-          timestamp: values[i][0],
-          fecha: values[i][1],
-          jugador: values[i][2],
-          estado: values[i][3],
-          observacion: values[i][4] || ''
-        });
-      }
-    }
-
-    // Aggregate by player and date
-    const aggregated = {};
-    records.forEach(record => {
-      const key = record.jugador;
-      if (!aggregated[key]) {
-        aggregated[key] = {
-          present: 0,
-          total: 0,
-          dates: {}
-        };
-      }
-      aggregated[key].total++;
-      if (record.estado === 'P' || record.estado === 'E/A') {
-        aggregated[key].present++;
-      }
-      if (!aggregated[key].dates[record.fecha]) {
-        aggregated[key].dates[record.fecha] = record.estado;
-      }
-    });
-
-    return {
-      status: 'success',
-      count: records.length,
-      aggregated: aggregated,
-      raw: records
-    };
   } catch (error) {
     return {
       status: 'error',

@@ -24,14 +24,10 @@ const TORNEO_CUTOFF = '2026-07-01'; // Inicio Torneo Clausura
 
 const ESTADO_LABEL = { 'P': 'Presente', 'E/A': 'Entrena Afuera', 'J': 'Justificado', 'A': 'Ausente' };
 
-// Alias fijos: nombres inconsistentes en registros históricos.
-const ALIASES = {
-  'DIAZ JONATAN CHANCLA': 'DIAZ JONATAN',
-  'LECUIMA ESTEBAN KUN': 'LECUIMA ESTEBAN',
-  'NIETO FABIO CATA': 'NIETO FABIO ARMANDO',
-  'NIETO FABIO ARMANDO CATA': 'NIETO FABIO ARMANDO',
-  'VILLARUEL DARIO CACO': 'VILLARUEL DANIEL'
-};
+// Alias fijos para nombres inconsistentes en registros históricos.
+// Vacío desde el reset de datos de 2026-08. Si en el futuro aparecen
+// registros con nombres que no matchean el plantel actual, se agregan acá.
+const ALIASES = {};
 
 // ======================== ESTADO COMPARTIDO ========================
 // players: array de {id, nombre}. El id es estable y no cambia si se renombra
