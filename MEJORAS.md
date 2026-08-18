@@ -31,13 +31,33 @@ Reglas que aplican a TODAS las tareas:
 
 ## Estado de las tareas
 
-- [ ] T1 — Limpieza de archivos y código muerto
-- [ ] T2 — Que el POST deje de ser ciego (prerequisito de T4)
-- [ ] T3 — Escapar HTML en datos de usuario
-- [ ] T4 — PIN del cuerpo técnico para autorizar escrituras
-- [ ] T5 — LockService + escrituras en lote en el Apps Script
-- [ ] T6 — Reportes por rango de fechas (no traer todo el historial)
-- [ ] T7 — Actualizar documentación y cierre
+- [x] T1 — Limpieza de archivos y código muerto — `76d40bf`
+- [x] T2 — Que el POST deje de ser ciego (prerequisito de T4) — `a816ef6`
+- [x] T3 — Escapar HTML en datos de usuario — `62a34c1`
+- [x] T4 — PIN del cuerpo técnico para autorizar escrituras — `3045fb7`
+- [x] T5 — LockService + escrituras en lote en el Apps Script — `638138f`
+- [x] T6 — Reportes por rango de fechas (no traer todo el historial) — `f7c9313`
+- [x] T7 — Actualizar documentación y cierre
+
+**Todo terminado.** `sw.js` quedó en `asistencias-v35`. `CACHED_URLS` no referencia ningún archivo borrado (`asistencias.html` nunca estuvo ahí).
+
+---
+
+## ⚠️ Qué falta hacer a mano (M)
+
+Esto no lo puede hacer el código. **En este orden:**
+
+1. **Cargar la columna E (PIN) en la hoja `CuerpoTecnico`** — 4 dígitos por cada profe habilitado.
+   Si se deploya el Apps Script con la columna vacía, **nadie puede cargar asistencia**.
+2. **Deployar el Apps Script**: pegar `apps_script.js` en el editor de GAS y hacer
+   **Deploy → Manage deployments → Deploy new version**. Guardar no alcanza.
+   Lo tocaron T1, T4, T5 y T6.
+3. **Avisarle a cada profe su PIN** (son los últimos 4 dígitos de su DNI). La primera vez
+   que abran la app les va a pedir el nombre y después el PIN.
+4. **Probar en la planilla real** lo que la suite no puede verificar sola:
+   guardar un día, volver a guardarlo con estados distintos, y confirmar que quedó
+   **exactamente una fila por jugador** (T5). Cronometrar antes/después con ~25 jugadores:
+   debería bajar de varios segundos a menos de uno.
 
 ---
 
@@ -392,7 +412,7 @@ Agregar **`E=PIN`**. M carga a mano los 4 dígitos de cada profe.
 
 ---
 
-## Fuera de alcance (por ahora)
+## Pendientes futuros
 
 Cosas que existen pero no vale la pena tocar todavía:
 
@@ -405,4 +425,59 @@ Cosas que existen pero no vale la pena tocar todavía:
 
 ## Hallazgos nuevos
 
-*(Anotá acá lo que encuentres durante la implementación y no entre en el alcance de la tarea en curso.)*
+Cosas que aparecieron durante la implementación.
+
+### Decisiones que se apartaron un poco del plan (y por qué)
+
+- **T2 — `postToScript` acepta `status:'warning'`, no solo `'success'`.** El plan decía tirar
+  si `json.status!=='success'`. Pero `addPlayer` devuelve `{status:'warning'}` cuando el
+  jugador ya existía en la planilla, y eso no es un rechazo: el alta local ya se hizo igual.
+  Con la regla literal, agregar un jugador que ya estaba en la hoja mostraba un falso
+  "no se pudo guardar". Se aceptan `success` y `warning`; cualquier otra cosa tira.
+
+- **T2 — el criterio red/servidor se aplicó también a las 3 mutaciones de jugadores.** El plan
+  lo pedía explícito solo para `saveAttendance` y `trySyncPending`, pero `addPlayer`,
+  `renamePlayer` y `setPlayerActivo` tenían el mismo `catch` genérico y el mismo bug de fondo.
+
+- **T3 — `renderMgmt()` también se pasó a DOM + listeners.** La tabla del plan solo marcaba el
+  picker de cuerpo técnico (`carga.html:758`), pero `renderMgmt()` tenía exactamente el mismo
+  patrón: el `id` del jugador dentro de un `onclick` inline, escapando solo la comilla simple
+  (`idAttr`). Una comilla doble en el id cerraba el atributo. Ahí `esc()` no sirve —
+  `&#39;` dentro de un `onclick` rompe el JavaScript en vez de protegerlo — así que se aplicó
+  la misma solución de raíz que al picker.
+
+- **T4 — el rechazo por PIN es un tercer caso, no "error de servidor".** T2 dejó la regla
+  "error del servidor ⇒ no encolar", pero T4 pide lo contrario para el PIN (encolar para no
+  perder lo cargado). Se resolvió con `needsPin` en el item de la cola: se encola, pero el
+  reintento automático lo saltea hasta que el profe corrija el PIN.
+
+- **T6 — `ampliarRango()` va 30 → 90 → todos, sin pasar por "Torneo".** El ancho de "Torneo"
+  depende de la fecha de hoy (hoy `TORNEO_CUTOFF` cae *después* de los 90 días, así que
+  sería un paso hacia atrás). Torneo sigue disponible como opción del selector.
+
+### Cosas del entorno, no del código
+
+- **Dos `.lock` de git abandonados bloqueaban todo commit**: `.git/index.lock` (18-ago 17:47,
+  0 bytes) y `.git/refs/heads/main.lock` (28-jul, apuntando a un sha que nunca se escribió).
+  No había ningún proceso de git corriendo. Se borraron. Si vuelve a pasar, es lo mismo:
+  verificar que no haya git abierto y borrar el `.lock`.
+- **`node_modules/` quedaba sin trackear ni ignorar** después del `npm i -D playwright` que
+  pide este mismo documento. Se agregó un `.gitignore` mínimo.
+- **Los browsers de Playwright no estaban descargados.** La suite corre igual contra el Chrome
+  del sistema con `CHROME_PATH=...`; quedó documentado en `copilot-instructions.md`.
+- **El payload de XSS de la suite usa `src=#`, no `src=x`.** Con `src=x` el navegador pide
+  `/x`, da 404, y el listener de respuestas de `run.js` lo registra como error de HTTP —
+  un fallo de XSS ensuciaba la salida con ruido que no era el punto. Con `src=#` el `onerror`
+  dispara igual si el escape falla, sin generar un 404.
+  Verificado que el check **falla** si se saca un solo `esc()`.
+
+### Sugerencias para más adelante (no se tocaron)
+
+- **`APP_VERSION` sigue en `2.1.1`.** Con todo esto encima (PIN, rango de reportes, cambio de
+  esquema en `CuerpoTecnico`) probablemente merezca un `2.2.0`, pero se dejó como estaba para
+  no meter cambios fuera del alcance. Es una línea en `common.js:17`.
+- **El pie de `index.html` dice "Corte Clausura: 1 Jul 2026"**, que sigue siendo cierto pero
+  ahora solo aplica a la opción "Torneo" del selector. Quizá convenga reescribirlo.
+- **`_test/run.js` depende de la fecha de hoy**: las fechas del mock están fijas alrededor de
+  2026-08-18, así que los checks de "últimos 30 días" van a empezar a fallar cuando pase el
+  tiempo. Cuando eso moleste, conviene generar las fechas del mock relativas a `new Date()`.
