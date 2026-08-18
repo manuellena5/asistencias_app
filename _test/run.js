@@ -6,6 +6,9 @@ const { chromium } = require('playwright');
 const BASE = 'http://localhost:8099';
 const CHROME = process.env.CHROME_PATH || undefined;
 
+// Payloads que el mock cuelga del nombre de un jugador y de una observación.
+const XSS_NOMBRE = 'DIAZ JONATAN <img src=# onerror="window.__xss=1">';
+
 const errors = [];
 const fails = [];
 function attach(page, tag) {
@@ -95,6 +98,20 @@ async function walkReports(page) {
   check('día: 4 filas', await p.$$eval('.ro-row', e => e.length), 4);
   check('día: muestra quién cargó', (await p.textContent('#day-out')).includes('Cargado por'), true);
   show('día: título', (await p.textContent('#day-out .card-hdr')).replace(/\s+/g, ' ').trim());
+
+  // ===== XSS: nombres y observaciones son texto libre de la planilla =====
+  // El nombre del jugador ya pasó por las 4 pestañas de reportes y por la
+  // vista por día. 2026-08-13 además tiene un justificado, así que trae la
+  // observación maliciosa a pantalla.
+  check('lector: el nombre malicioso se muestra como texto literal',
+    (await p.textContent('#day-out')).includes(XSS_NOMBRE), true);
+  await p.fill('#day-date', '2026-08-13');
+  await p.waitForSelector('.ro-obs', { timeout: 10000 });
+  check('lector: la observación maliciosa se muestra como texto literal',
+    (await p.textContent('.ro-obs')).includes('<script>window.__xss=1</script>'), true);
+  check('lector: nada del payload se ejecutó',
+    await p.evaluate(() => window.__xss), undefined);
+
   await p.fill('#day-date', '2026-08-05');
   await p.waitForTimeout(900);
   check('día sin datos: mensaje correcto',
@@ -141,7 +158,9 @@ async function walkReports(page) {
     return c.querySelector('.name').textContent + '=' + (b ? b.textContent.trim() : '?');
   }));
   check('form: precarga los estados guardados', estados,
-    ['ACOSTA MARTIN=A', 'BENITEZ LUCAS=P', 'CORDOBA NAHUEL=P', 'DIAZ JONATAN=E/A']);
+    ['ACOSTA MARTIN=A', 'BENITEZ LUCAS=P', 'CORDOBA NAHUEL=P', XSS_NOMBRE + '=E/A']);
+  check('carga: el nombre malicioso se muestra como texto literal en el form',
+    await q.$$eval('.player-card .name', e => e.map(x => x.textContent)).then(n => n.includes(XSS_NOMBRE)), true);
 
   await q.click('.player-card:nth-child(1) .status-btns button:nth-child(3)'); // marcar J
   await q.waitForTimeout(150);
@@ -169,6 +188,17 @@ async function walkReports(page) {
   await q.click('.nav button:nth-child(3)');
   await q.waitForTimeout(300);
   check('jugadores: 5 filas (incluye inactivo)', await q.$$eval('.mgmt-item', e => e.length), 5);
+  check('jugadores: el nombre malicioso se muestra como texto literal',
+    (await q.textContent('#mgmt-list')).includes(XSS_NOMBRE), true);
+  // El picker de cuerpo técnico y la lista de jugadores arman los botones por
+  // DOM: ya no queda ni un onclick inline con datos de la planilla adentro.
+  check('jugadores: sin onclick inline con datos de la planilla',
+    await q.$$eval('#mgmt-list [onclick]', e => e.length), 0);
+  check('picker de cuerpo técnico: sin onclick inline',
+    await q.$$eval('#staff-picker-list [onclick]', e => e.length), 0);
+
+  check('carga: nada del payload se ejecutó',
+    await q.evaluate(() => window.__xss), undefined);
 
   await q.click('.nav button:nth-child(4)');
   await q.waitForTimeout(300);

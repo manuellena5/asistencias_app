@@ -214,7 +214,7 @@ function renderWeekly() {
           const dayRec = weekData.find(d => d.date === date);
           const st = dayRec ? dayRec.players[p] : '';
           if (st) {
-            dotsH += `<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot ${dotClass(st)}">${st}</div></div>`;
+            dotsH += `<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot ${esc(dotClass(st))}">${esc(st)}</div></div>`;
           } else {
             dotsH += `<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot none">—</div></div>`;
           }
@@ -222,7 +222,7 @@ function renderWeekly() {
       });
       h += `<div class="semanal-card">
         <div class="semanal-card-top">
-          <span class="semanal-card-name">${displayName(p)}</span>
+          <span class="semanal-card-name">${esc(displayName(p))}</span>
           <span class="badge ${badgeClass(pct)}">${pct}%</span>
         </div>
         <div class="semanal-card-bot">
@@ -276,7 +276,7 @@ function renderTotales() {
       <div class="semanal-card-top">
         <div style="display:flex;align-items:center;gap:8px">
           <span class="rank-num">#${i + 1}</span>
-          <span class="semanal-card-name">${displayName(p)}</span>
+          <span class="semanal-card-name">${esc(displayName(p))}</span>
         </div>
         <span class="badge ${badgeClass(pct)}">${pct}%</span>
       </div>
@@ -324,7 +324,7 @@ function renderMonthly() {
     h += `<div class="card"><div class="card-hdr">Semana ${wi + 1}: ${formatWeek(wk)}<span class="badge ${badgeClass(wavg)}">${wavg}% · ${wt} prác.</span></div>`;
     sortedP.forEach(p => {
       const pct = Math.round(wa[p] / wt * 100);
-      h += `<div class="p-row"><span class="date">${displayName(p)}</span><span class="st">${wa[p]}/${wt}</span><span class="st" style="min-width:40px;text-align:right;color:${pctColor(pct)}">${pct}%</span></div>`;
+      h += `<div class="p-row"><span class="date">${esc(displayName(p))}</span><span class="st">${wa[p]}/${wt}</span><span class="st" style="min-width:40px;text-align:right;color:${pctColor(pct)}">${pct}%</span></div>`;
     });
     h += `</div>`;
   });
@@ -332,7 +332,7 @@ function renderMonthly() {
   h += `<div class="card"><div class="card-hdr">Total del Mes</div>`;
   sortedP.forEach(p => {
     const pct = Math.round(att[p] / total * 100);
-    h += `<div class="p-row"><span class="date">${displayName(p)}</span><span class="st">${att[p]}/${total}</span><span class="st" style="min-width:40px;text-align:right;color:${pctColor(pct)}">${pct}%</span></div>`;
+    h += `<div class="p-row"><span class="date">${esc(displayName(p))}</span><span class="st">${att[p]}/${total}</span><span class="st" style="min-width:40px;text-align:right;color:${pctColor(pct)}">${pct}%</span></div>`;
   });
   h += `</div>`;
   out.innerHTML = h;
@@ -358,7 +358,7 @@ function renderPlayer() {
   });
   const pct = total ? Math.round(attended / total * 100) : 0;
 
-  let h = `<div class="card"><div class="card-hdr">${displayName(pk)}<span class="badge ${badgeClass(pct)}">${pct}%</span></div>
+  let h = `<div class="card"><div class="card-hdr">${esc(displayName(pk))}<span class="badge ${badgeClass(pct)}">${pct}%</span></div>
     <div class="stats" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat"><div class="n" style="color:var(--green)">${attended}</div><div class="l">Presentes</div></div>
       <div class="stat"><div class="n" style="color:var(--red)">${total - attended}</div><div class="l">Ausencias</div></div>
@@ -371,7 +371,7 @@ function renderPlayer() {
     let trendH = '';
     trend.forEach(d => {
       const lbl = formatDateShort(d.date).split(' ')[0];
-      trendH += `<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot ${dotClass(d.status)}" title="${formatDateLong(d.date)}">${d.status}</div></div>`;
+      trendH += `<div class="day-col"><div class="day-lbl">${lbl}</div><div class="dot ${esc(dotClass(d.status))}" title="${formatDateLong(d.date)}">${esc(d.status)}</div></div>`;
     });
     h += `<div class="card"><div class="card-hdr">Tendencia reciente</div><div style="padding:12px;display:flex;gap:6px;flex-wrap:wrap">${trendH}</div></div>`;
   }
@@ -379,8 +379,8 @@ function renderPlayer() {
   h += `<div class="card"><div class="card-hdr">Historial</div>`;
   details.slice().reverse().forEach(d => {
     const stLabel = ESTADO_LABEL[d.status] || d.status;
-    const obsHtml = d.status === 'J' && d.obs ? `<span style="font-size:.78rem;color:var(--gray);font-style:italic;display:block;margin-top:2px">"${d.obs}"</span>` : '';
-    h += `<div class="p-row" style="flex-wrap:wrap"><span class="date">${formatDateLong(d.date)}</span><div style="display:flex;flex-direction:column;align-items:flex-end"><div style="display:flex;align-items:center;gap:6px"><span class="dot ${dotClass(d.status)}">${d.status}</span><span class="st" style="color:${d.present ? 'var(--green)' : 'var(--red)'}">${stLabel}</span></div>${obsHtml}</div></div>`;
+    const obsHtml = d.status === 'J' && d.obs ? `<span style="font-size:.78rem;color:var(--gray);font-style:italic;display:block;margin-top:2px">"${esc(d.obs)}"</span>` : '';
+    h += `<div class="p-row" style="flex-wrap:wrap"><span class="date">${formatDateLong(d.date)}</span><div style="display:flex;flex-direction:column;align-items:flex-end"><div style="display:flex;align-items:center;gap:6px"><span class="dot ${esc(dotClass(d.status))}">${esc(d.status)}</span><span class="st" style="color:${d.present ? 'var(--green)' : 'var(--red)'}">${esc(stLabel)}</span></div>${obsHtml}</div></div>`;
   });
   h += `</div>`;
   out.innerHTML = h;

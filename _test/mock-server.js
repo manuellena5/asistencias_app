@@ -7,11 +7,20 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const PORT = 8099;
 
+// A DIAZ JONATAN se le cuelga un payload de XSS a propósito: los nombres y
+// las observaciones son texto libre que sale de la planilla y se interpola en
+// innerHTML en las dos apps. El prefijo 'DIAZ ' se mantiene para que el orden
+// alfabético (y por lo tanto el resto de los checks) no cambie.
+// src=# en vez de src=x: si el escape falla igual dispara onerror, pero no
+// genera un 404 que la suite registraría como error de HTTP.
+const XSS_NOMBRE = 'DIAZ JONATAN <img src=# onerror="window.__xss=1">';
+const XSS_OBS = '"><img src=# onerror="window.__xss=1"><script>window.__xss=1</script>';
+
 const PLAYERS = [
   { nombre: 'ACOSTA MARTIN', activo: true, id: 'p1' },
   { nombre: 'BENITEZ LUCAS', activo: true, id: 'p2' },
   { nombre: 'CORDOBA NAHUEL', activo: true, id: 'p3' },
-  { nombre: 'DIAZ JONATAN', activo: true, id: 'p4' },
+  { nombre: XSS_NOMBRE, activo: true, id: 'p4' },
   { nombre: 'ESPINOZA RAMIRO', activo: false, id: 'p5' }
 ];
 
@@ -31,7 +40,7 @@ function recordsFor(fecha) {
     fecha,
     jugador: p.nombre,
     estado: ESTADOS[(i + fi) % ESTADOS.length],
-    observacion: ESTADOS[(i + fi) % ESTADOS.length] === 'J' ? 'Trabajo' : '',
+    observacion: ESTADOS[(i + fi) % ESTADOS.length] === 'J' ? XSS_OBS : '',
     jugadorId: p.id,
     cargadoPorNombre: STAFF[fi % 2].nombre,
     cargadoPorId: STAFF[fi % 2].id

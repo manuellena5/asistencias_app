@@ -277,7 +277,7 @@ async function renderTodayQuickAccess(){
   const hasData=records&&records.length>0;
   if(hasData){
     const cargadoPor=records[0].cargadoPorNombre;
-    c2.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600;margin-bottom:10px">✅ Ya hay datos cargados para hoy${cargadoPor?`<div style="font-weight:400;font-size:.78rem;margin-top:2px">Cargado por: ${cargadoPor}</div>`:''}</div>
+    c2.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600;margin-bottom:10px">✅ Ya hay datos cargados para hoy${cargadoPor?`<div style="font-weight:400;font-size:.78rem;margin-top:2px">Cargado por: ${esc(cargadoPor)}</div>`:''}</div>
       <button class="btn btn-primary" style="margin-top:0" onclick="openToday()">Ver / Editar asistencia de hoy</button>`;
   } else {
     c2.innerHTML=`<button class="btn btn-primary" style="margin-top:0" onclick="openToday()">📋 Cargar las asistencias de hoy</button>`;
@@ -295,7 +295,7 @@ function openToday(){
 function renderStatusCard(state,fecha,records){
   const c=document.getElementById('status-card');
   const cargadoPor=(records&&records.length&&records[0].cargadoPorNombre)?records[0].cargadoPorNombre:'';
-  const cargadoPorHtml=cargadoPor?`<div style="font-size:.75rem;color:var(--gray);margin-top:4px">Cargado por: ${cargadoPor}</div>`:'';
+  const cargadoPorHtml=cargadoPor?`<div style="font-size:.75rem;color:var(--gray);margin-top:4px">Cargado por: ${esc(cargadoPor)}</div>`:'';
   if(state==='empty'){
     c.className='form-placeholder';
     c.style.padding='';
@@ -329,7 +329,7 @@ function renderStatusCard(state,fecha,records){
   } else if(state==='banner-loaded'){
     c.className='date-banner loaded';
     c.style.padding='';
-    c.innerHTML=`<div>✅&nbsp;<strong>${formatDateLong(fecha)}</strong>&nbsp;— datos cargados${cargadoPor?` <span style="font-weight:400;opacity:.85">· Cargado por: ${cargadoPor}</span>`:''}</div>`;
+    c.innerHTML=`<div>✅&nbsp;<strong>${formatDateLong(fecha)}</strong>&nbsp;— datos cargados${cargadoPor?` <span style="font-weight:400;opacity:.85">· Cargado por: ${esc(cargadoPor)}</span>`:''}</div>`;
   }
 }
 
@@ -393,7 +393,7 @@ function renderForm(){
     div.id='pc-'+i;
     div.innerHTML=`
       <div class="player-top">
-        <span class="name">${p.nombre}</span>
+        <span class="name">${esc(p.nombre)}</span>
         <div class="status-btns">
           <button class="sel-P" onclick="setStatus(${i},'P')">P</button>
           <button onclick="setStatus(${i},'E/A')">E/A</button>
@@ -665,21 +665,39 @@ function renderMgmt(){
     const d=document.createElement('div');
     d.className='mgmt-item'+(active?'':' mgmt-item-inactive');
     if(!active)d.style.opacity='.55';
-    const idAttr=(p.id||'').replace(/'/g,"\\'");
 
+    // Los botones se arman por DOM: el id del jugador viene de la planilla y
+    // antes iba dentro de un onclick inline, donde escaparlo no es posible sin
+    // romper el JavaScript (mismo caso que el picker de cuerpo técnico).
     if(editingPlayer===p.id){
       d.style.opacity='1';
-      d.innerHTML=`<input type="text" id="rename-input" value="${p.nombre.replace(/"/g,'&quot;')}" style="flex:1;padding:8px 10px;border:2px solid var(--primary);border-radius:8px;font-size:.9rem;font-family:inherit;margin-right:8px">
-        <button class="btn-sm" style="background:var(--green);color:#fff;min-height:32px;padding:5px 10px" onclick="confirmRename('${idAttr}')">✓</button>
-        <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 10px;margin-left:4px" onclick="cancelRename()">✕</button>`;
+      const inp=document.createElement('input');
+      inp.type='text'; inp.id='rename-input'; inp.value=p.nombre;
+      inp.style.cssText='flex:1;padding:8px 10px;border:2px solid var(--primary);border-radius:8px;font-size:.9rem;font-family:inherit;margin-right:8px';
+      const ok=document.createElement('button');
+      ok.className='btn-sm'; ok.textContent='✓';
+      ok.style.cssText='background:var(--green);color:#fff;min-height:32px;padding:5px 10px';
+      ok.onclick=()=>confirmRename(p.id);
+      const no=document.createElement('button');
+      no.className='btn-sm btn-sec'; no.textContent='✕';
+      no.style.cssText='min-height:32px;padding:5px 10px;margin-left:4px';
+      no.onclick=()=>cancelRename();
+      d.append(inp,ok,no);
       c.appendChild(d);
       return;
     }
 
-    d.innerHTML=`<span style="flex:1">${p.nombre}</span>
-      <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 8px;margin-right:6px" title="Editar nombre" onclick="startRename('${idAttr}')">✏️</button>
-      <button class="btn-sm" style="background:${active?'var(--green-bg)':'var(--gray-light)'};color:${active?'var(--green-text)':'var(--gray)'};min-height:32px;padding:5px 12px"
-        onclick="togglePlayerActivo('${idAttr}')">${active?'✓ Activo':'Inactivo'}</button>`;
+    const nom=document.createElement('span');
+    nom.style.flex='1'; nom.textContent=p.nombre;
+    const edit=document.createElement('button');
+    edit.className='btn-sm btn-sec'; edit.textContent='✏️'; edit.title='Editar nombre';
+    edit.style.cssText='min-height:32px;padding:5px 8px;margin-right:6px';
+    edit.onclick=()=>startRename(p.id);
+    const act=document.createElement('button');
+    act.className='btn-sm'; act.textContent=active?'✓ Activo':'Inactivo';
+    act.style.cssText=`background:${active?'var(--green-bg)':'var(--gray-light)'};color:${active?'var(--green-text)':'var(--gray)'};min-height:32px;padding:5px 12px`;
+    act.onclick=()=>togglePlayerActivo(p.id);
+    d.append(nom,edit,act);
     c.appendChild(d);
   });
 }
@@ -816,9 +834,19 @@ function openStaffPicker(blocking){
     toast('No hay personas cargadas en Cuerpo Técnico todavía','error');
     return;
   }
-  list.innerHTML=enabled.map(s=>
-    `<button class="btn btn-sec" style="margin-top:0;text-align:left" onclick="selectStaff('${s.id}')">${s.nombre}${s.cargo?' — '+s.cargo:''}</button>`
-  ).join('');
+  // Botones armados por DOM en vez de innerHTML: el id iba dentro de un
+  // onclick inline, y ahí no alcanza con escapar (escapar la comilla rompe el
+  // JavaScript, no escaparla lo deja inyectable). textContent + listener saca
+  // el problema de raíz.
+  list.innerHTML='';
+  enabled.forEach(s=>{
+    const b=document.createElement('button');
+    b.className='btn btn-sec';
+    b.style.cssText='margin-top:0;text-align:left';
+    b.textContent=s.nombre+(s.cargo?' — '+s.cargo:'');
+    b.onclick=()=>selectStaff(s.id);
+    list.appendChild(b);
+  });
   document.getElementById('staff-picker-cancel').style.display=blocking?'none':'block';
   overlay.style.display='flex';
 }
@@ -840,7 +868,7 @@ function renderStaffCfg(){
   const el=document.getElementById('staff-cfg-current');
   if(!el)return;
   if(myStaffId){
-    el.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">👤 Estás cargando como: ${myStaffName}${myStaffCargo?' ('+myStaffCargo+')':''}</div>`;
+    el.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">👤 Estás cargando como: ${esc(myStaffName)}${myStaffCargo?' ('+esc(myStaffCargo)+')':''}</div>`;
   } else {
     el.innerHTML=`<div style="background:var(--yellow-bg);color:var(--yellow-text);border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">⚠️ Todavía no elegiste quién sos</div>`;
   }

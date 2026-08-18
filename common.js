@@ -296,6 +296,18 @@ function badgeClass(p) { return p >= 75 ? 'badge-g' : p >= 50 ? 'badge-y' : 'bad
 function dotClass(estado) { return estado === 'E/A' ? 'EA' : estado; }
 
 // ======================== UI COMPARTIDA ========================
+// Escapa datos que vienen de la planilla antes de meterlos en innerHTML.
+// Los nombres y sobre todo las observaciones son texto libre: un nombre con
+// '<' rompe el render, y uno con '<img src=x onerror=...>' ejecuta JavaScript
+// en la pantalla de todos los que miran los reportes.
+// REGLA: todo dato de la planilla que vaya a innerHTML pasa por esc().
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function toast(msg, type) {
   const t = document.createElement('div');
   t.className = 'toast ' + (type || 'success');

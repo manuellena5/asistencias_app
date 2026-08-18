@@ -207,7 +207,7 @@ function renderDayView(fecha,records){
       <div class="stat"><div class="n" style="color:var(--yellow)">${cnt['J']}</div><div class="l">Justificados</div></div>
       <div class="stat"><div class="n" style="color:var(--red)">${cnt['A']}</div><div class="l">Ausentes</div></div>
     </div>
-    ${cargadoPor?`<div style="padding:0 14px 12px;font-size:.78rem;color:var(--gray)">👤 Cargado por: <strong>${cargadoPor}</strong></div>`:''}
+    ${cargadoPor?`<div style="padding:0 14px 12px;font-size:.78rem;color:var(--gray)">👤 Cargado por: <strong>${esc(cargadoPor)}</strong></div>`:''}
   </div>`;
 
   h+=`<div class="card"><div class="card-hdr">Detalle (${rows.length} jugadores)</div>`;
@@ -215,12 +215,12 @@ function renderDayView(fecha,records){
     const stLabel=ESTADO_LABEL[r.estado]||r.estado;
     const color=(r.estado==='P'||r.estado==='E/A')?'var(--green)':r.estado==='J'?'var(--yellow-text)':'var(--red)';
     h+=`<div class="ro-row">
-      <span class="dot ${dotClass(r.estado)}">${r.estado}</span>
-      <span class="ro-name">${r.nombre}</span>
-      <span class="ro-lbl" style="color:${color}">${stLabel}</span>
+      <span class="dot ${esc(dotClass(r.estado))}">${esc(r.estado)}</span>
+      <span class="ro-name">${esc(r.nombre)}</span>
+      <span class="ro-lbl" style="color:${color}">${esc(stLabel)}</span>
     </div>`;
     if(r.estado==='J'&&r.obs){
-      h+=`<div class="ro-obs">"${r.obs}"</div>`;
+      h+=`<div class="ro-obs">"${esc(r.obs)}"</div>`;
     }
   });
   h+=`</div>`;
