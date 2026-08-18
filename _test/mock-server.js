@@ -29,6 +29,19 @@ const STAFF = [
   { nombre: 'GOMEZ CARLOS', cargo: 'PF', habilitado: true, id: 's2' }
 ];
 
+// Los PIN viven aparte a propósito: en la planilla real están en la columna E
+// de CuerpoTecnico y getStaff NO los devuelve nunca (es un GET público).
+// s2 no tiene PIN cargado => no puede escribir.
+const STAFF_PINS = { s1: '1234' };
+
+function staffAutorizado(staffId, pin) {
+  if (!staffId || !pin) return false;
+  const s = STAFF.find(x => x.id === staffId);
+  if (!s || !s.habilitado) return false;
+  const esperado = STAFF_PINS[staffId];
+  return !!esperado && esperado === pin.toString().trim();
+}
+
 const FECHAS = ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18'];
 const ESTADOS = ['P', 'P', 'E/A', 'J', 'A'];
 
@@ -83,9 +96,19 @@ http.createServer((req, res) => {
       req.on('data', c => body += c);
       req.on('end', () => {
         console.log(`  [mock] POST recibido (${rechaza ? 'rechaza' : 'acepta'}):`, body.slice(0, 120));
-        json(res, rechaza
-          ? { status: 'error', message: 'La hoja Asistencias_App no existe' }
-          : { status: 'success' });
+        if (rechaza) {
+          return json(res, { status: 'error', message: 'La hoja Asistencias_App no existe' });
+        }
+        let data = {};
+        try { data = JSON.parse(body); } catch (e) { }
+        if (!staffAutorizado(data.staffId, data.pin)) {
+          return json(res, {
+            status: 'error',
+            code: 'no-autorizado',
+            message: 'PIN incorrecto o usuario no habilitado para cargar.'
+          });
+        }
+        json(res, { status: 'success' });
       });
       return;
     }

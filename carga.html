@@ -89,6 +89,7 @@
       <div style="padding:14px">
         <div id="staff-cfg-current" style="margin-bottom:12px"></div>
         <button class="btn btn-primary" onclick="openStaffPicker(false)">Cambiar quién sos</button>
+        <button class="btn btn-sec" style="margin-top:8px" onclick="openPinOnly()">Cambiar PIN</button>
       </div>
     </div>
     <div class="card">
@@ -154,10 +155,19 @@
 
 <div id="staff-picker-overlay" class="modal-overlay" style="z-index:400">
   <div class="modal-box">
-    <div class="m-ico">👤</div>
-    <div class="m-title">¿Quién sos?</div>
-    <div class="m-msg" style="margin-bottom:14px">Elegí tu nombre para que quede registrado quién cargó la asistencia.</div>
+    <div class="m-ico" id="staff-picker-ico">👤</div>
+    <div class="m-title" id="staff-picker-title">¿Quién sos?</div>
+    <div class="m-msg" id="staff-picker-msg" style="margin-bottom:14px">Elegí tu nombre para que quede registrado quién cargó la asistencia.</div>
     <div id="staff-picker-list" style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto"></div>
+    <!-- Paso 2: el PIN (últimos 4 dígitos del DNI). inputmode numeric para que
+         en el celular abra el teclado numérico y no el alfabético. -->
+    <div id="staff-pin-step" style="display:none">
+      <input type="password" id="staff-pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="● ● ● ●"
+        style="width:100%;padding:12px;border:2px solid var(--border);border-radius:8px;font-size:1.3rem;text-align:center;letter-spacing:.4em;font-family:inherit">
+      <div id="staff-pin-error" style="display:none;color:var(--red);font-size:.8rem;margin-top:8px;font-weight:600"></div>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="confirmStaffPin()">Confirmar</button>
+      <button class="btn btn-sec" id="staff-pin-back" style="margin-top:6px" onclick="backToStaffList()">← Elegir otro nombre</button>
+    </div>
     <button class="btn" id="staff-picker-cancel" style="background:var(--gray-light);color:var(--gray);margin-top:14px;display:none" onclick="closeStaffPicker()">Cancelar</button>
   </div>
 </div>
@@ -174,6 +184,9 @@ let pendingQueue=JSON.parse(localStorage.getItem('club_pending_queue')||'[]');
 let myStaffId=localStorage.getItem('club_staff_id')||'';
 let myStaffName=localStorage.getItem('club_staff_name')||'';
 let myStaffCargo=localStorage.getItem('club_staff_cargo')||'';
+// PIN del profe: los últimos 4 dígitos de su DNI, cargados a mano en la
+// columna E de CuerpoTecnico. Sin PIN válido el Apps Script rechaza todo POST.
+let myStaffPin=localStorage.getItem('club_staff_pin')||'';
 let editingPlayer=null; // id del jugador que se está renombrando ahora mismo (o null)
 
 // common.js consulta este hook antes de pisar el respaldo offline de una fecha
@@ -224,14 +237,14 @@ document.addEventListener('DOMContentLoaded',async()=>{
   await fetchLoadedDates(); // chips y estado de "hoy" listos antes de mostrar la pantalla
   renderDatesStrip(pickDate);
   renderPendingBanner();
-  trySyncPending(true); // por si quedó algo pendiente de una sesión sin conexión
+  trySyncPending(true,false); // por si quedó algo pendiente de una sesión sin conexión
   await showEmptyState();
   requestNotificationPermission();
 
-  // Primera vez en este dispositivo: pedir que elija quién es antes de
-  // dejarlo cargar asistencia. Si no hay lista de personas habilitadas
-  // (por ejemplo, sin conexión en el primer uso), no bloqueamos.
-  if(!myStaffId) openStaffPicker(true);
+  // Primera vez en este dispositivo: pedir que elija quién es y cargue su PIN
+  // antes de dejarlo cargar asistencia. Si no hay lista de personas
+  // habilitadas (por ejemplo, sin conexión en el primer uso), no bloqueamos.
+  if(!myStaffId||!myStaffPin) openStaffPicker(true);
 
   hideBootOverlay();
 });
@@ -484,6 +497,12 @@ async function saveAttendance(){
         // Sin conexión: ya quedó guardado en el dispositivo, lo encolamos para subirlo solo después
         queuePendingAction('saveAttendance',{data:data.records,overwrite:true},data.fecha,'Asistencia del '+formatDateLong(data.fecha));
         showSaveModal('offline',data.fecha,data.records.length);
+      }else if(esNoAutorizado(err)){
+        // PIN incorrecto. Lo cargado no se pierde: queda en el dispositivo y
+        // en la cola, marcado para que no se reintente solo. Cuando el profe
+        // corrija el PIN, sube.
+        queuePendingAction('saveAttendance',{data:data.records,overwrite:true},data.fecha,'Asistencia del '+formatDateLong(data.fecha),true);
+        showSaveModal('pin',data.fecha,data.records.length,err.message);
       }else{
         // El servidor respondió y rechazó el guardado. NO encolar: reintentarlo
         // solo cada 60s no lo va a arreglar. El guardado local queda igual, así
@@ -512,6 +531,15 @@ function showSaveModal(status,fecha,count,errMsg){
     msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)} y ya se sincronizaron con la planilla.`;
     actions.innerHTML=`
       <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();goToReports()">Ver reportes</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
+  } else if(status==='pin'){
+    // El servidor rechazó el PIN. Lo cargado NO se pierde: quedó en el
+    // dispositivo y en la cola, esperando que el profe corrija el PIN.
+    icon.textContent='🔒';
+    title.textContent='PIN incorrecto';
+    msg.textContent=`La asistencia del ${formatDateLong(fecha)} quedó guardada en este dispositivo pero no se subió a la planilla${errMsg?': '+errMsg:''}. Corregí tu PIN y se sube sola.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();openPinOnly()">Cambiar PIN</button>
       <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
   } else if(status==='offline'){
     icon.textContent='💾';
@@ -555,18 +583,23 @@ function goToReports(){
 // deployado como "Cualquier persona". Content-Type text/plain mantiene el
 // POST como "simple request", así que no hay preflight OPTIONS (que GAS no
 // maneja bien).
+// staffId y pin se agregan ACÁ, en el momento del envío, y nunca dentro del
+// payload que se encola: un item que quedó esperando en la cola tiene que
+// subir con el PIN vigente, no con el que había cuando se encoló.
 async function postToScript(action,payload){
   const res=await fetch(scriptUrl,{
     method:'POST',mode:'cors',redirect:'follow',
     headers:{'Content-Type':'text/plain'}, // text/plain evita el preflight OPTIONS
-    body:JSON.stringify({action,...payload})
+    body:JSON.stringify({action,staffId:myStaffId,pin:myStaffPin,...payload})
   });
   if(!res.ok) throw new Error('HTTP '+res.status);
   const json=await res.json();
   // 'warning' no es un rechazo: addPlayer lo devuelve cuando el jugador ya
   // existía en la planilla, y el alta local ya se hizo igual.
   if(json.status!=='success'&&json.status!=='warning'){
-    throw new Error(json.message||'El servidor rechazó el guardado');
+    const err=new Error(json.message||'El servidor rechazó el guardado');
+    err.code=json.code||''; // 'no-autorizado' cuando el PIN no valida
+    throw err;
   }
   return json;
 }
@@ -581,14 +614,26 @@ function esErrorDeRed(e){
   return !navigator.onLine || e instanceof TypeError;
 }
 
+// El servidor rechazó la escritura por PIN. Es un tercer caso: a diferencia
+// de cualquier otro error de servidor, este SÍ se encola — pero marcado, para
+// que el reintento automático cada 60s no lo mande una y otra vez con el
+// mismo PIN malo. Se vuelve a intentar recién cuando el profe corrige el PIN.
+function esNoAutorizado(e){
+  return !!e && e.code==='no-autorizado';
+}
+
 function savePendingQueue(){localStorage.setItem('club_pending_queue',JSON.stringify(pendingQueue));}
 
 // Guarda (o reemplaza, si ya había uno igual) un cambio pendiente de subir.
 // dedupeKey identifica "lo mismo" para no acumular versiones viejas del mismo
 // cambio (ej. tildar y destildar Activo varias veces offline sobre el mismo jugador).
-function queuePendingAction(action,payload,dedupeKey,label){
+// needsPin=true: lo rechazó el servidor por PIN. Queda en la cola para no
+// perder lo cargado, pero el reintento automático lo saltea hasta que el
+// profe corrija el PIN. El payload NUNCA lleva el PIN adentro: lo agrega
+// postToScript en el momento del envío.
+function queuePendingAction(action,payload,dedupeKey,label,needsPin){
   pendingQueue=pendingQueue.filter(it=>!(it.action===action&&it.dedupeKey===dedupeKey));
-  pendingQueue.push({id:genId(),action,payload,dedupeKey,label,ts:Date.now()});
+  pendingQueue.push({id:genId(),action,payload,dedupeKey,label,ts:Date.now(),needsPin:!!needsPin});
   savePendingQueue();
   renderPendingBanner();
 }
@@ -606,20 +651,25 @@ function renderPendingBanner(){
     el.style.display='flex';
     const btnHtml=syncingPending
       ? `<button class="btn-sm" style="background:var(--yellow);color:#fff;min-height:28px;padding:4px 10px;flex-shrink:0;opacity:.7" disabled>Sincronizando...</button>`
-      : `<button class="btn-sm" style="background:var(--yellow);color:#fff;min-height:28px;padding:4px 10px;flex-shrink:0" onclick="trySyncPending(false)">Sincronizar</button>`;
+      : `<button class="btn-sm" style="background:var(--yellow);color:#fff;min-height:28px;padding:4px 10px;flex-shrink:0" onclick="trySyncPending(false,true)">Sincronizar</button>`;
     el.innerHTML=`<span>🔄 ${pendingQueue.length} cambio${pendingQueue.length!==1?'s':''} sin sincronizar${syncingPending?' (sincronizando...)':''}</span>${btnHtml}`;
   });
   const noPending=document.getElementById('no-pending-msg');
   if(noPending)noPending.style.display=pendingQueue.length?'none':'block';
 }
 
-async function trySyncPending(silent){
+// retryPin=true: incluye también los items que el servidor rechazó por PIN.
+// Solo cuando el intento es explícito (botón Sincronizar, o después de que el
+// profe corrigió el PIN). El reintento automático los saltea.
+async function trySyncPending(silent,retryPin){
   if(syncingPending||!pendingQueue.length||!scriptUrl)return;
+  const toTry=pendingQueue.filter(it=>retryPin||!it.needsPin);
+  if(!toTry.length)return;
   syncingPending=true;
   renderPendingBanner();
   let synced=0;
   const rechazados=[];
-  const toTry=[...pendingQueue];
+  let pinRechazado=false;
   for(const item of toTry){
     try{
       await postToScript(item.action,item.payload);
@@ -628,9 +678,15 @@ async function trySyncPending(silent){
     }catch(e){
       if(esErrorDeRed(e)){
         // Sigue sin conexión: lo dejamos en cola para el próximo intento
+      }else if(esNoAutorizado(e)){
+        // PIN incorrecto: se queda en la cola (no se pierde lo cargado) pero
+        // marcado, para que el reintento automático no insista al pedo.
+        const it=pendingQueue.find(p=>p.id===item.id);
+        if(it){it.needsPin=true;}
+        pinRechazado=true;
       }else{
-        // El servidor lo rechazó. Sacarlo de la cola: reintentarlo cada 60s
-        // con el mismo payload no lo va a arreglar nunca.
+        // El servidor lo rechazó por otro motivo. Sacarlo de la cola:
+        // reintentarlo cada 60s con el mismo payload no lo va a arreglar.
         pendingQueue=pendingQueue.filter(p=>p.id!==item.id);
         rechazados.push({label:item.label,message:e.message});
       }
@@ -639,6 +695,9 @@ async function trySyncPending(silent){
   savePendingQueue();
   syncingPending=false;
   renderPendingBanner();
+  if(pinRechazado&&!silent){
+    toast('🔒 PIN incorrecto: lo cargado sigue guardado acá. Corregí tu PIN en Config.','error');
+  }
   if(rechazados.length){
     // Este aviso sale siempre, aunque el intento haya sido automático: es un
     // cambio que se descartó y el profe tiene que enterarse.
@@ -653,8 +712,8 @@ async function trySyncPending(silent){
   }
 }
 
-window.addEventListener('online',()=>trySyncPending(false));
-setInterval(()=>trySyncPending(true),60000);
+window.addEventListener('online',()=>trySyncPending(false,false));
+setInterval(()=>trySyncPending(true,false),60000);
 
 // ======================== GESTIÓN DE JUGADORES ========================
 function renderMgmt(){
@@ -753,6 +812,9 @@ async function confirmRename(id){
     if(esErrorDeRed(e)){
       queuePendingAction('renamePlayer',{id,newName,oldName},id,'Rename: '+oldName+' → '+newName);
       toast('Nombre actualizado (se sincronizará cuando haya conexión)','success');
+    }else if(esNoAutorizado(e)){
+      queuePendingAction('renamePlayer',{id,newName,oldName},id,'Rename: '+oldName+' → '+newName,true);
+      toast('🔒 PIN incorrecto: el cambio quedó pendiente. Corregí tu PIN en Config.','error');
     }else{
       toast('Se renombró en el dispositivo, pero la planilla lo rechazó: '+e.message,'error');
     }
@@ -785,6 +847,9 @@ async function addPlayer(){
     if(esErrorDeRed(e)){
       queuePendingAction('addPlayer',{name,id},id,'Nuevo jugador: '+name);
       toast('Jugador agregado (se sincronizará cuando haya conexión)','success');
+    }else if(esNoAutorizado(e)){
+      queuePendingAction('addPlayer',{name,id},id,'Nuevo jugador: '+name,true);
+      toast('🔒 PIN incorrecto: el alta quedó pendiente. Corregí tu PIN en Config.','error');
     }else{
       toast('Se agregó en el dispositivo, pero la planilla lo rechazó: '+e.message,'error');
     }
@@ -816,6 +881,9 @@ async function togglePlayerActivo(id){
     if(esErrorDeRed(e)){
       queuePendingAction('setPlayerActivo',{id,activo:nowActive,name:player.nombre},id,'Estado de '+player.nombre);
       toast((nowActive?'Jugador activado':'Jugador desactivado')+' (se sincronizará cuando haya conexión)','success');
+    }else if(esNoAutorizado(e)){
+      queuePendingAction('setPlayerActivo',{id,activo:nowActive,name:player.nombre},id,'Estado de '+player.nombre,true);
+      toast('🔒 PIN incorrecto: el cambio quedó pendiente. Corregí tu PIN en Config.','error');
     }else{
       toast('Se cambió en el dispositivo, pero la planilla lo rechazó: '+e.message,'error');
     }
@@ -823,6 +891,28 @@ async function togglePlayerActivo(id){
 }
 
 // ======================== CUERPO TÉCNICO (¿quién sos?) ========================
+// El picker tiene dos pasos: elegir el nombre y después cargar el PIN. La
+// primera vez en el dispositivo no se cierra hasta que haya los dos.
+let pendingStaffSel=null;   // staff elegido, esperando el PIN
+let staffPickerBlocking=false;
+
+function showStaffStep(paso){
+  const esPin=(paso==='pin');
+  document.getElementById('staff-picker-list').style.display=esPin?'none':'flex';
+  document.getElementById('staff-pin-step').style.display=esPin?'block':'none';
+  document.getElementById('staff-picker-ico').textContent=esPin?'🔒':'👤';
+  document.getElementById('staff-picker-title').textContent=esPin?'Tu PIN':'¿Quién sos?';
+  document.getElementById('staff-picker-msg').textContent=esPin
+    ? `${pendingStaffSel?pendingStaffSel.nombre+': i':'I'}ngresá los últimos 4 dígitos de tu DNI. Sin PIN no se puede subir la asistencia a la planilla.`
+    : 'Elegí tu nombre para que quede registrado quién cargó la asistencia.';
+  document.getElementById('staff-pin-error').style.display='none';
+  if(esPin){
+    const inp=document.getElementById('staff-pin-input');
+    inp.value='';
+    setTimeout(()=>inp.focus(),50);
+  }
+}
+
 // blocking=true: primera vez en el dispositivo, no se puede cerrar sin elegir.
 // blocking=false: se abre desde Ajustes para cambiar quién está cargando.
 function openStaffPicker(blocking){
@@ -834,6 +924,10 @@ function openStaffPicker(blocking){
     toast('No hay personas cargadas en Cuerpo Técnico todavía','error');
     return;
   }
+  staffPickerBlocking=!!blocking;
+  pendingStaffSel=null;
+  showStaffStep('lista');
+  document.getElementById('staff-pin-back').style.display='';
   // Botones armados por DOM en vez de innerHTML: el id iba dentro de un
   // onclick inline, y ahí no alcanza con escapar (escapar la comilla rompe el
   // JavaScript, no escaparla lo deja inyectable). textContent + listener saca
@@ -853,22 +947,67 @@ function openStaffPicker(blocking){
 function closeStaffPicker(){
   document.getElementById('staff-picker-overlay').style.display='none';
 }
+
+// Paso 1 → paso 2. El nombre no se guarda todavía: recién cuando hay PIN.
 function selectStaff(id){
   const s=staffList.find(x=>x.id===id);
   if(!s)return;
-  myStaffId=s.id; myStaffName=s.nombre; myStaffCargo=s.cargo;
+  pendingStaffSel=s;
+  showStaffStep('pin');
+}
+
+function backToStaffList(){
+  pendingStaffSel=null;
+  showStaffStep('lista');
+}
+
+// Abre el picker directo en el paso del PIN, para corregirlo sin tener que
+// volver a elegir quién sos (botón "Cambiar PIN" de Config).
+function openPinOnly(){
+  if(!myStaffId){openStaffPicker(false);return;}
+  staffPickerBlocking=false;
+  pendingStaffSel=staffList.find(s=>s.id===myStaffId)||{id:myStaffId,nombre:myStaffName,cargo:myStaffCargo};
+  showStaffStep('pin');
+  document.getElementById('staff-pin-back').style.display='none';
+  document.getElementById('staff-picker-cancel').style.display='block';
+  document.getElementById('staff-picker-overlay').style.display='flex';
+}
+
+function confirmStaffPin(){
+  const inp=document.getElementById('staff-pin-input');
+  const err=document.getElementById('staff-pin-error');
+  const pin=(inp.value||'').trim();
+  if(!/^\d{4}$/.test(pin)){
+    err.textContent='El PIN son 4 números (los últimos 4 dígitos de tu DNI).';
+    err.style.display='block';
+    inp.focus();
+    return;
+  }
+  const s=pendingStaffSel;
+  if(!s)return;
+  myStaffId=s.id; myStaffName=s.nombre; myStaffCargo=s.cargo||''; myStaffPin=pin;
   localStorage.setItem('club_staff_id',myStaffId);
   localStorage.setItem('club_staff_name',myStaffName);
   localStorage.setItem('club_staff_cargo',myStaffCargo);
-  document.getElementById('staff-picker-overlay').style.display='none';
+  localStorage.setItem('club_staff_pin',myStaffPin);
+  pendingStaffSel=null;
+  staffPickerBlocking=false;
+  closeStaffPicker();
   renderStaffCfg();
   toast('Vas a cargar asistencia como '+myStaffName,'success');
+  // Si había cambios frenados por un PIN malo, ahora se pueden reintentar.
+  const habiaFrenados=pendingQueue.some(p=>p.needsPin);
+  pendingQueue.forEach(p=>{p.needsPin=false;});
+  savePendingQueue();
+  if(habiaFrenados)trySyncPending(false,true);
 }
 function renderStaffCfg(){
   const el=document.getElementById('staff-cfg-current');
   if(!el)return;
-  if(myStaffId){
-    el.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">👤 Estás cargando como: ${esc(myStaffName)}${myStaffCargo?' ('+esc(myStaffCargo)+')':''}</div>`;
+  if(myStaffId&&myStaffPin){
+    el.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">👤 Estás cargando como: ${esc(myStaffName)}${myStaffCargo?' ('+esc(myStaffCargo)+')':''}<div style="font-weight:400;font-size:.78rem;margin-top:2px">PIN cargado ····</div></div>`;
+  } else if(myStaffId){
+    el.innerHTML=`<div style="background:var(--yellow-bg);color:var(--yellow-text);border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">🔒 ${esc(myStaffName)} — falta tu PIN. Sin PIN no se puede subir nada a la planilla.</div>`;
   } else {
     el.innerHTML=`<div style="background:var(--yellow-bg);color:var(--yellow-text);border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">⚠️ Todavía no elegiste quién sos</div>`;
   }

@@ -138,8 +138,20 @@ async function walkReports(page) {
     ['\u{1F4CB}Asistencia', '\u{1F4CA}Reportes', '\u{1F465}Jugadores', '⚙️Config']);
 
   check('picker "¿quién sos?" se abre solo', await q.isVisible('#staff-picker-overlay'), true);
-  await q.click('#staff-picker-list button');
+  await q.click('#staff-picker-list button'); // PEREZ JUAN (s1)
+  await q.waitForTimeout(200);
+  // Paso 2: sin PIN el picker no deja pasar
+  check('picker: pide el PIN después del nombre', await q.isVisible('#staff-pin-step'), true);
+  await q.fill('#staff-pin-input', '12');
+  await q.click('#staff-pin-step .btn-primary');
+  await q.waitForTimeout(200);
+  check('picker: rechaza un PIN que no son 4 dígitos', await q.isVisible('#staff-picker-overlay'), true);
+  check('picker: no guarda un PIN inválido',
+    await q.evaluate(() => localStorage.getItem('club_staff_pin')), null);
+  await q.fill('#staff-pin-input', '1234');
+  await q.click('#staff-pin-step .btn-primary');
   await q.waitForTimeout(300);
+  check('picker: se cierra con nombre + PIN', await q.isVisible('#staff-picker-overlay'), false);
 
   // >>> Los reportes tienen que estar acá y ser IGUALES a los del lector <<<
   await q.click('.nav button:nth-child(2)');
@@ -167,11 +179,20 @@ async function walkReports(page) {
   check('form: campo de observación al marcar J', await q.isVisible('#obs-0'), true);
 
   const posts = [];
-  q.on('request', r => { if (r.method() === 'POST') posts.push(r.url()); });
+  q.on('request', r => { if (r.method() === 'POST') posts.push({ url: r.url(), body: r.postData() }); });
   await q.click('#btn-save');
   await q.waitForSelector('#save-modal-overlay', { state: 'visible', timeout: 10000 });
   check('guardar: modal de éxito', (await q.textContent('#save-modal-title')).trim(), 'Asistencia guardada');
   check('guardar: 1 POST al backend', posts.length, 1);
+  {
+    const body = JSON.parse(posts[0].body);
+    check('guardar: el POST lleva staffId y pin', { staffId: body.staffId, pin: body.pin },
+      { staffId: 's1', pin: '1234' });
+    // El PIN se agrega en el envío, no al encolar: un item viejo de la cola
+    // tiene que subir con el PIN vigente, no con el de cuando se encoló.
+    check('guardar: el PIN no viaja dentro del payload encolable',
+      JSON.stringify(body.data).includes('1234'), false);
+  }
 
   // El botón del modal lleva a los reportes DENTRO de la app de carga
   await q.click('#save-modal-actions button');
@@ -210,6 +231,73 @@ async function walkReports(page) {
   check('lector: sin link a carga.html en Ajustes',
     await p.$$eval('a[href="carga.html"]', e => e.length), 0);
 
+  // ================= PIN DEL CUERPO TÉCNICO =================
+  console.log('\n=== PIN del cuerpo técnico ===');
+
+  // EL check crítico: si el PIN viaja en el GET público, toda la tarea no
+  // sirve para nada.
+  const staffJson = await (await ctx.request.get(BASE + '/exec?action=getStaff')).json();
+  check('getStaff NO devuelve el campo pin en ninguna fila',
+    staffJson.staff.some(s => 'pin' in s), false);
+  check('getStaff: ninguna fila contiene el valor del PIN',
+    JSON.stringify(staffJson).includes('1234'), false);
+
+  // Un POST sin PIN es rechazado por el backend (equivalente al curl del plan)
+  const sinPin = await (await ctx.request.post(BASE + '/exec', {
+    headers: { 'Content-Type': 'text/plain' },
+    data: JSON.stringify({ action: 'saveAttendance', data: [], overwrite: true })
+  })).json();
+  check('POST sin PIN: rechazado', { status: sinPin.status, code: sinPin.code },
+    { status: 'error', code: 'no-autorizado' });
+
+  // Un profe sin PIN cargado en la hoja tampoco puede escribir
+  const s2 = await (await ctx.request.post(BASE + '/exec', {
+    headers: { 'Content-Type': 'text/plain' },
+    data: JSON.stringify({ action: 'saveAttendance', staffId: 's2', pin: '9999', data: [], overwrite: true })
+  })).json();
+  check('POST de un profe sin PIN en la hoja: rechazado', s2.code, 'no-autorizado');
+
+  // ===== PIN incorrecto desde la app: no se pierde lo cargado =====
+  const pinCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await pinCtx.addInitScript(() => {
+    localStorage.setItem('club_script_url', 'http://localhost:8099/exec');
+    localStorage.setItem('club_staff_id', 's1');
+    localStorage.setItem('club_staff_name', 'PEREZ JUAN');
+    localStorage.setItem('club_staff_cargo', 'DT');
+    localStorage.setItem('club_staff_pin', '0000'); // PIN equivocado
+  });
+  const w = await pinCtx.newPage();
+  attach(w, 'carga-pin');
+  await w.goto(BASE + '/carga.html');
+  await w.waitForSelector('#boot-overlay', { state: 'detached', timeout: 20000 });
+  await w.click('.date-chip');
+  await w.waitForSelector('.player-card', { timeout: 10000 });
+  const fechaPin = await w.inputValue('#att-date');
+  await w.click('#btn-save');
+  await w.waitForSelector('#save-modal-overlay', { state: 'visible', timeout: 10000 });
+
+  check('PIN incorrecto: modal específico', (await w.textContent('#save-modal-title')).trim(), 'PIN incorrecto');
+  check('PIN incorrecto: el guardado local NO se borra',
+    await w.evaluate(f => JSON.parse(localStorage.getItem('att_' + f) || '[]').length, fechaPin), 4);
+  check('PIN incorrecto: queda en la cola, marcado para no reintentar solo',
+    await w.evaluate(() => {
+      const q = JSON.parse(localStorage.getItem('club_pending_queue') || '[]');
+      return { largo: q.length, needsPin: q[0] && q[0].needsPin };
+    }), { largo: 1, needsPin: true });
+  check('PIN incorrecto: el PIN no quedó guardado dentro del item encolado',
+    await w.evaluate(() => (localStorage.getItem('club_pending_queue') || '').includes('0000')), false);
+
+  // Corregir el PIN desde el modal => se sube lo que estaba frenado
+  await w.click('#save-modal-actions button'); // "Cambiar PIN"
+  await w.waitForSelector('#staff-pin-step', { state: 'visible', timeout: 5000 });
+  await w.fill('#staff-pin-input', '1234');
+  await w.click('#staff-pin-step .btn-primary');
+  await w.waitForTimeout(1200); // el reintento automático tras corregir el PIN
+  check('PIN corregido: la cola se vacía sola',
+    await w.evaluate(() => JSON.parse(localStorage.getItem('club_pending_queue') || '[]').length), 0);
+  check('PIN corregido: queda guardado', await w.evaluate(() => localStorage.getItem('club_staff_pin')), '1234');
+  await pinCtx.close();
+
   // ============ SERVIDOR QUE RECHAZA (el POST ya no es ciego) ============
   // Con mode:'no-cors' este caso se veía como un guardado exitoso: el fetch
   // resolvía igual y el profe leía "✅ ya se sincronizaron con la planilla".
@@ -217,10 +305,11 @@ async function walkReports(page) {
   const errCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await errCtx.addInitScript(() => {
     localStorage.setItem('club_script_url', 'http://localhost:8099/exec-error');
-    // Quién sos ya elegido, para que el picker no tape el formulario
+    // Quién sos y PIN ya cargados, para que el picker no tape el formulario
     localStorage.setItem('club_staff_id', 's1');
     localStorage.setItem('club_staff_name', 'PEREZ JUAN');
     localStorage.setItem('club_staff_cargo', 'DT');
+    localStorage.setItem('club_staff_pin', '1234');
   });
   const z = await errCtx.newPage();
   attach(z, 'carga-error');

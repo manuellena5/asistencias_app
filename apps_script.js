@@ -80,6 +80,16 @@ function doPost(e) {
     const action = data.action;
     let response = {};
 
+    // Toda escritura requiere (staffId, pin) de una fila habilitada de
+    // CuerpoTecnico. doGet queda abierto a proposito: la consulta es publica.
+    if (!staffAutorizado(data.staffId, data.pin)) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'error',
+        code: 'no-autorizado',
+        message: 'PIN incorrecto o usuario no habilitado para cargar.'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     switch (action) {
       case 'saveAttendance':
         response = saveAttendanceData(data.data, data.overwrite === true);
@@ -106,6 +116,33 @@ function doPost(e) {
     }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * Valida que (staffId, pin) corresponda a una fila habilitada de CuerpoTecnico.
+ * El PIN son los ultimos 4 digitos del DNI, cargados a mano en la columna E.
+ *
+ * Sin PIN en la hoja => no puede escribir (decision explicita, no lo cambies
+ * por un fallback permisivo: dejaria la validacion sin efecto).
+ *
+ * La columna E se lee SOLO desde aca. getStaffData() nunca la devuelve: ese
+ * endpoint es un GET publico y si el PIN viajara ahi, todo esto no serviria
+ * para nada.
+ */
+function staffAutorizado(staffId, pin) {
+  if (!staffId || !pin) return false;
+  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(STAFF_SHEET_NAME);
+  if (!sheet) return false;
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    const rowId = (values[i][3] || '').toString().trim();
+    const rowPin = (values[i][4] || '').toString().trim();
+    const habilitado = (values[i][2] || '').toString().trim().toUpperCase() !== 'NO';
+    if (rowId && rowId === staffId.toString().trim()) {
+      return habilitado && rowPin !== '' && rowPin === pin.toString().trim();
+    }
+  }
+  return false;
 }
 
 /**
@@ -318,9 +355,14 @@ function getPlayersData() {
 }
 
 /**
- * Get cuerpo técnico data. Columnas: A=Nombre, B=Cargo, C=Habilitado, D=ID.
+ * Get cuerpo técnico data. Columnas: A=Nombre, B=Cargo, C=Habilitado, D=ID,
+ * E=PIN.
  * Mismo patrón que getPlayersData: si una fila no tiene ID, se le genera
  * uno acá y se graba en la hoja (auto-migración).
+ *
+ * ⚠️ La columna E (PIN) NO se lee ni se devuelve acá, y no hay que agregarla:
+ * este endpoint es un GET público. El PIN se usa solo dentro de
+ * staffAutorizado(), que corre del lado del servidor.
  */
 function getStaffData() {
   try {
@@ -529,12 +571,13 @@ function initializeSheets() {
       newSheet.appendRow(['Nombre', 'Activo', 'ID']);
     }
 
-    // CuerpoTecnico sheet — la carga a mano el usuario (Nombre/Cargo/Habilitado);
-    // solo se crea con encabezados si todavía no existe.
+    // CuerpoTecnico sheet — la carga a mano el usuario (Nombre/Cargo/Habilitado
+    // y el PIN, que son los últimos 4 dígitos del DNI); solo se crea con
+    // encabezados si todavía no existe.
     const staffSheet = spreadsheet.getSheetByName(STAFF_SHEET_NAME);
     if (!staffSheet) {
       const newStaffSheet = spreadsheet.insertSheet(STAFF_SHEET_NAME);
-      newStaffSheet.appendRow(['Nombre', 'Cargo', 'Habilitado', 'ID']);
+      newStaffSheet.appendRow(['Nombre', 'Cargo', 'Habilitado', 'ID', 'PIN']);
     }
 
     Logger.log('Sheets initialized successfully');
