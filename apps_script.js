@@ -7,6 +7,40 @@ const PLAYERS_SHEET_NAME = 'Jugadores';
 const STAFF_SHEET_NAME = 'CuerpoTecnico';
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
 
+// Encabezado canonico de Asistencias_App. Define tambien el ancho del bloque
+// que se escribe de una sola vez en saveAttendanceData.
+const ATTENDANCE_HEADER = ['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID', 'CargadoPorNombre', 'CargadoPorID'];
+
+/**
+ * Corre fn() con el lock del script tomado y devuelve lo que fn() devuelva.
+ *
+ * Sin esto, dos profes guardando el mismo dia casi al mismo tiempo leen la
+ * hoja los dos, borran los dos y escriben los dos: el resultado son filas
+ * duplicadas o borradas de mas.
+ */
+function conLock(fn) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000); // 20s
+  } catch (e) {
+    return { status: 'error', message: 'El sistema está ocupado, probá de nuevo en unos segundos.' };
+  }
+  try {
+    return fn();
+  } catch (error) {
+    return { status: 'error', message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Lleva una fila al ancho exacto de ancho columnas (setValues exige filas parejas). */
+function filaAlAncho(fila, ancho) {
+  const f = fila.slice(0, ancho);
+  while (f.length < ancho) f.push('');
+  return f;
+}
+
 /**
  * Normaliza el valor de la columna Fecha a 'YYYY-MM-DD'.
  * Sheets deserializa las fechas como objetos Date; toISOString() las pasa a UTC
@@ -154,38 +188,45 @@ function doOptions(e) {
 }
 
 /**
- * Save attendance records to the Asistencias_App sheet
+ * Save attendance records to the Asistencias_App sheet.
+ *
+ * Todo el trabajo se hace en memoria y termina en UNA sola escritura. Antes
+ * el overwrite hacia deleteRow() en un loop y el guardado appendRow() en otro:
+ * con 30 jugadores eran ~60 llamadas a la API de Sheets por guardado.
  */
 function saveAttendanceData(records, overwrite) {
-  try {
+  return conLock(function () {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     let sheet = spreadsheet.getSheetByName(ATTENDANCE_SHEET_NAME);
 
     // Create sheet if it doesn't exist
     if (!sheet) {
       sheet = spreadsheet.insertSheet(ATTENDANCE_SHEET_NAME);
-      sheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID', 'CargadoPorNombre', 'CargadoPorID']);
+      sheet.appendRow(ATTENDANCE_HEADER);
     }
 
-    // If overwrite: delete all existing rows for this date before inserting
+    const ancho = ATTENDANCE_HEADER.length;
+    const values = sheet.getDataRange().getValues();
+    const tieneEncabezado = values.length > 0 && values[0].some(function (c) { return c !== '' && c !== null; });
+    const encabezado = tieneEncabezado ? filaAlAncho(values[0], ancho) : ATTENDANCE_HEADER.slice();
+
+    // Filas existentes, sin las vacias
+    let filas = values.slice(1)
+      .filter(function (r) { return r.some(function (c) { return c !== '' && c !== null; }); })
+      .map(function (r) { return filaAlAncho(r, ancho); });
+
+    // overwrite: en vez de borrar fila por fila, se filtra en memoria
     if (overwrite && records.length > 0) {
       const fecha = records[0].fecha;
-      const values = sheet.getDataRange().getValues();
-      // Iterate backwards to safely delete rows
-      for (let i = values.length - 1; i >= 1; i--) {
-        const cellStr = normalizeFecha(values[i][1]);
-        if (cellStr === fecha) {
-          sheet.deleteRow(i + 1); // sheet rows are 1-indexed
-        }
-      }
+      filas = filas.filter(function (r) { return normalizeFecha(r[1]) !== fecha; });
     }
 
-    // Append new records — columna F guarda el ID estable del jugador
-    // (si el nombre se renombra después, el registro sigue mapeado por ID).
-    // Columnas G/H guardan quién cargó la asistencia (nombre + ID estable
-    // del cuerpo técnico, mismo patrón por si le cambian el nombre después).
-    records.forEach(record => {
-      sheet.appendRow([
+    // Columna F guarda el ID estable del jugador (si el nombre se renombra
+    // después, el registro sigue mapeado por ID). Columnas G/H guardan quién
+    // cargó la asistencia (nombre + ID estable del cuerpo técnico, mismo
+    // patrón por si le cambian el nombre después).
+    records.forEach(function (record) {
+      filas.push([
         record.timestamp,
         record.fecha,
         record.jugador,
@@ -197,17 +238,19 @@ function saveAttendanceData(records, overwrite) {
       ]);
     });
 
+    // Una sola escritura del bloque completo. El bloque siempre tiene al menos
+    // el encabezado, asi que nunca se llama a setValues([]) (que tira error).
+    const bloque = [encabezado].concat(filas);
+    sheet.clearContents();
+    sheet.getRange(1, 1, bloque.length, ancho).setValues(bloque);
+    SpreadsheetApp.flush();
+
     return {
       status: 'success',
       message: `${records.length} attendance records saved`,
       count: records.length
     };
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error.toString()
-    };
-  }
+  });
 }
 
 /**
@@ -217,7 +260,7 @@ function saveAttendanceData(records, overwrite) {
  * genera acá.
  */
 function addNewPlayer(name, id) {
-  try {
+  return conLock(function () {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     let sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
 
@@ -248,12 +291,7 @@ function addNewPlayer(name, id) {
       message: `Player ${name} added successfully`,
       id: newId
     };
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error.toString()
-    };
-  }
+  });
 }
 
 /**
@@ -416,7 +454,7 @@ function getStaffData() {
  * reportes.
  */
 function setPlayerActivo(id, activo, name) {
-  try {
+  return conLock(function () {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     const sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
     if (!sheet) {
@@ -436,12 +474,7 @@ function setPlayerActivo(id, activo, name) {
       }
     }
     return { status: 'error', message: 'Jugador no encontrado' };
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error.toString()
-    };
-  }
+  });
 }
 
 /**
@@ -453,7 +486,7 @@ function setPlayerActivo(id, activo, name) {
  * en el cliente vía el mapa de alias por nombre.
  */
 function renamePlayer(id, newName, oldName) {
-  try {
+  return conLock(function () {
     const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
     const sheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
     if (!sheet) {
@@ -476,12 +509,7 @@ function renamePlayer(id, newName, oldName) {
       }
     }
     return { status: 'error', message: 'Jugador no encontrado' };
-  } catch (error) {
-    return {
-      status: 'error',
-      message: error.toString()
-    };
-  }
+  });
 }
 
 /**

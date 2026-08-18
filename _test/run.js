@@ -56,6 +56,10 @@ async function walkReports(page) {
 }
 
 (async () => {
+  // Primero los tests del Apps Script contra un Sheets simulado: son
+  // instantaneos y cubren lo que el navegador no puede tocar.
+  fails.push(...require('./apps-script.test.js').fails);
+
   const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   // Apuntar la app al Apps Script simulado antes de que corra cualquier script
