@@ -4,6 +4,7 @@
 const SHEET_ID = '1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const ATTENDANCE_SHEET_NAME = 'Asistencias_App';
 const PLAYERS_SHEET_NAME = 'Jugadores';
+const STAFF_SHEET_NAME = 'CuerpoTecnico';
 
 /**
  * Main handler for GET requests
@@ -30,6 +31,9 @@ function doGet(e) {
         break;
       case 'getAttendanceDates':
         response = getAttendanceDatesData();
+        break;
+      case 'getStaff':
+        response = getStaffData();
         break;
       default:
         response = { status: 'ok', message: 'Apps Script is running' };
@@ -111,7 +115,7 @@ function saveAttendanceData(records, overwrite) {
     // Create sheet if it doesn't exist
     if (!sheet) {
       sheet = spreadsheet.insertSheet(ATTENDANCE_SHEET_NAME);
-      sheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID']);
+      sheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID', 'CargadoPorNombre', 'CargadoPorID']);
     }
 
     // If overwrite: delete all existing rows for this date before inserting
@@ -131,7 +135,9 @@ function saveAttendanceData(records, overwrite) {
     }
 
     // Append new records — columna F guarda el ID estable del jugador
-    // (si el nombre se renombra después, el registro sigue mapeado por ID)
+    // (si el nombre se renombra después, el registro sigue mapeado por ID).
+    // Columnas G/H guardan quién cargó la asistencia (nombre + ID estable
+    // del cuerpo técnico, mismo patrón por si le cambian el nombre después).
     records.forEach(record => {
       sheet.appendRow([
         record.timestamp,
@@ -139,7 +145,9 @@ function saveAttendanceData(records, overwrite) {
         record.jugador,
         record.estado,
         record.observacion || '',
-        record.jugadorId || ''
+        record.jugadorId || '',
+        record.cargadoPorNombre || '',
+        record.cargadoPorId || ''
       ]);
     });
 
@@ -233,7 +241,9 @@ function getAttendanceData(fecha) {
           jugador: values[i][2],
           estado: values[i][3],
           observacion: values[i][4] || '',
-          jugadorId: values[i][5] || ''
+          jugadorId: values[i][5] || '',
+          cargadoPorNombre: values[i][6] || '',
+          cargadoPorId: values[i][7] || ''
         });
       }
     }
@@ -291,6 +301,55 @@ function getPlayersData() {
       status: 'success',
       count: players.length,
       players: players
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      message: error.toString()
+    };
+  }
+}
+
+/**
+ * Get cuerpo técnico data. Columnas: A=Nombre, B=Cargo, C=Habilitado, D=ID.
+ * Mismo patrón que getPlayersData: si una fila no tiene ID, se le genera
+ * uno acá y se graba en la hoja (auto-migración).
+ */
+function getStaffData() {
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = spreadsheet.getSheetByName(STAFF_SHEET_NAME);
+
+    if (!sheet) {
+      return {
+        status: 'success',
+        staff: []
+      };
+    }
+
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+    const staff = [];
+
+    for (let i = 1; i < values.length; i++) {
+      const nombre = (values[i][0] || '').toString().trim();
+      if (!nombre) continue;
+
+      const cargo = (values[i][1] || '').toString().trim();
+      const habilitadoRaw = (values[i][2] || '').toString().trim().toUpperCase();
+      let id = (values[i][3] || '').toString().trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(i + 1, 4).setValue(id); // backfill columna D
+      }
+
+      staff.push({ nombre: nombre, cargo: cargo, habilitado: habilitadoRaw !== 'NO', id: id });
+    }
+
+    return {
+      status: 'success',
+      count: staff.length,
+      staff: staff
     };
   } catch (error) {
     return {
@@ -497,7 +556,9 @@ function getAllAttendanceData() {
         jugador:     values[i][2] || '',
         estado:      values[i][3] || '',
         observacion: values[i][4] || '',
-        jugadorId:   values[i][5] || ''
+        jugadorId:   values[i][5] || '',
+        cargadoPorNombre: values[i][6] || '',
+        cargadoPorId:     values[i][7] || ''
       });
     }
 
@@ -523,15 +584,23 @@ function initializeSheets() {
     let attendanceSheet = spreadsheet.getSheetByName(ATTENDANCE_SHEET_NAME);
     if (!attendanceSheet) {
       attendanceSheet = spreadsheet.insertSheet(ATTENDANCE_SHEET_NAME);
-      attendanceSheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación']);
+      attendanceSheet.appendRow(['Timestamp', 'Fecha', 'Jugador', 'Estado', 'Observación', 'JugadorID', 'CargadoPorNombre', 'CargadoPorID']);
     }
 
-    // Jugadores sheet — already exists with custom columns, don't recreate it
+    // Jugadores sheet — already exists con columnas propias, no recrear
     const playersSheet = spreadsheet.getSheetByName(PLAYERS_SHEET_NAME);
     if (!playersSheet) {
       // Only create if truly missing (no existing data to preserve)
       const newSheet = spreadsheet.insertSheet(PLAYERS_SHEET_NAME);
       newSheet.appendRow(['Nombre', 'Activo', 'ID']);
+    }
+
+    // CuerpoTecnico sheet — la carga a mano el usuario (Nombre/Cargo/Habilitado);
+    // solo se crea con encabezados si todavía no existe.
+    const staffSheet = spreadsheet.getSheetByName(STAFF_SHEET_NAME);
+    if (!staffSheet) {
+      const newStaffSheet = spreadsheet.insertSheet(STAFF_SHEET_NAME);
+      newStaffSheet.appendRow(['Nombre', 'Cargo', 'Habilitado', 'ID']);
     }
 
     Logger.log('Sheets initialized successfully');
