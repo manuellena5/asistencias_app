@@ -42,14 +42,10 @@ function staffAutorizado(staffId, pin) {
   return !!esperado && esperado === pin.toString().trim();
 }
 
-const FECHAS_RECIENTES = ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18'];
-// Fechas repartidas en ~6 meses, para probar el rango de reportes. Van al
-// FINAL del array a propósito: recordsFor() deriva los estados del índice, y
-// así los checks de las fechas recientes no cambian al agregar historial.
-// 2026-03/05/06 son anteriores al TORNEO_CUTOFF (2026-07-01); 2026-07-14 es
-// posterior al corte pero anterior a los últimos 30 días.
-const FECHAS_VIEJAS = ['2026-03-10', '2026-05-12', '2026-06-02', '2026-07-14'];
-const FECHAS = FECHAS_RECIENTES.concat(FECHAS_VIEJAS);
+// Las fechas se generan relativas a hoy en _test/fixtures.js, compartido con
+// run.js: unas dentro de los últimos 30 días y otras repartidas hacia atrás,
+// para poder probar el rango de reportes sin que la suite caduque.
+const { FECHAS } = require('./fixtures.js');
 const ESTADOS = ['P', 'P', 'E/A', 'J', 'A'];
 
 function recordsFor(fecha) {

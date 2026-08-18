@@ -277,4 +277,6 @@ Verifica, entre otras cosas, que **los reportes de las dos apps sean idénticos*
 
 El mock sirve a propósito un jugador y una observación con payload de XSS, y expone `/exec-error` (responde HTTP 200 con `status:'error'`) para probar el camino de error del servidor.
 
+**Las fechas de prueba se generan relativas a hoy**, en `_test/fixtures.js`, que comparten el mock (sirve los datos) y `run.js` (arma las expectativas). Si agregás un check que dependa de una fecha, sacala de ahí — nunca la escribas a mano, o la suite se va a romper sola cuando pase el tiempo. `fixtures.js` lee `TORNEO_CUTOFF` y `MESES` de `common.js`, así que si cambian en la app, la suite los sigue sin tocar nada. El orden de `FECHAS` importa: el mock deriva los estados del índice, así que `FECHAS[4]` es hoy y `FECHAS[3]` es el día con justificado.
+
 `_test/` no forma parte de la app y no se sirve en producción.

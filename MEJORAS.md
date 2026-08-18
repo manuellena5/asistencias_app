@@ -471,13 +471,19 @@ Cosas que aparecieron durante la implementación.
   dispara igual si el escape falla, sin generar un 404.
   Verificado que el check **falla** si se saca un solo `esc()`.
 
+### Resueltos después del cierre
+
+- **`APP_VERSION` pasó a `2.2.0`** (estaba en `2.1.1`). Con el PIN, el rango de reportes y el
+  cambio de esquema en `CuerpoTecnico`, era un cambio menor de versión.
+- **Las fechas de la suite ya no están fijas.** Estaban clavadas alrededor de 2026-08-18, así
+  que los checks de "últimos 30 días" iban a empezar a fallar solos con el tiempo. Ahora se
+  generan relativas a hoy en `_test/fixtures.js`, compartido por el mock y por `run.js` para
+  que no haya dos copias de la misma cuenta. `fixtures.js` lee `TORNEO_CUTOFF` y `MESES` de
+  `common.js`, así que sigue los cambios de la app sola. Verificado con 158 fechas simuladas
+  a lo largo de 3 años: las invariantes se mantienen, y ahora también se chequean dentro de
+  la suite (si el fixture degenera, el check avisa en vez de pasar sin probar nada).
+
 ### Sugerencias para más adelante (no se tocaron)
 
-- **`APP_VERSION` sigue en `2.1.1`.** Con todo esto encima (PIN, rango de reportes, cambio de
-  esquema en `CuerpoTecnico`) probablemente merezca un `2.2.0`, pero se dejó como estaba para
-  no meter cambios fuera del alcance. Es una línea en `common.js:17`.
 - **El pie de `index.html` dice "Corte Clausura: 1 Jul 2026"**, que sigue siendo cierto pero
   ahora solo aplica a la opción "Torneo" del selector. Quizá convenga reescribirlo.
-- **`_test/run.js` depende de la fecha de hoy**: las fechas del mock están fijas alrededor de
-  2026-08-18, así que los checks de "últimos 30 días" van a empezar a fallar cuando pase el
-  tiempo. Cuando eso moleste, conviene generar las fechas del mock relativas a `new Date()`.

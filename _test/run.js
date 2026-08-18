@@ -3,6 +3,9 @@
 //   node _test/mock-server.js   # en una terminal
 //   node _test/run.js           # en otra
 const { chromium } = require('playwright');
+// Las fechas del mock son relativas a hoy, así que las expectativas se
+// calculan a partir del mismo módulo en vez de estar escritas a mano.
+const F = require('./fixtures.js');
 const BASE = 'http://localhost:8099';
 const CHROME = process.env.CHROME_PATH || undefined;
 
@@ -78,9 +81,22 @@ async function walkReports(page) {
   check('nav de 3 pestañas', await p.$$eval('.nav button', b => b.map(x => x.textContent.trim())),
     ['\u{1F4CA}Reportes', '\u{1F4C5}Por día', '⚙️Ajustes']);
 
+  // Invariantes del fixture. Las fechas se generan relativas a hoy, así que
+  // esto se chequea explícitamente: si alguna se rompe, los checks de rango
+  // de más abajo pasarían sin probar nada.
+  const fechas30 = F.enRango(F.desdeParaDias(30), '');
+  const fechas90 = F.enRango(F.desdeParaDias(90), '');
+  console.log(`    (fixture: ${F.FECHAS.length} fechas, ${fechas30.length} en los últimos 30 días, hoy=${F.hoy()})`);
+  check('fixture: la fecha más reciente es hoy', fechas30[fechas30.length - 1], F.hoy());
+  check('fixture: 90 días es más ancho que 30', fechas90.length > fechas30.length, true);
+  check('fixture: "Todo" es más ancho que 90 días', F.FECHAS.length > fechas90.length, true);
+  check('fixture: la fecha "sin datos" realmente no tiene datos',
+    F.FECHAS.indexOf(F.FECHA_SIN_DATOS), -1);
+
   const repLector = await walkReports(p);
   check('semanal: 4 jugadores', repLector.semanal.cards, 4);
-  check('mensual: 1 mes', repLector.mensual.periodos, ['Agosto 2026']);
+  // Mensual solo ofrece los meses que hay dentro del rango activo (30 días)
+  check('mensual: los meses del rango', repLector.mensual.periodos, F.mesesDe(fechas30));
   check('por jugador: 4 en el selector', repLector.jugador.jugadores.length, 4);
   check('totales: ranking de 4', repLector.totales.ranking, 4);
   show('semanal header', repLector.semanal.header);
@@ -92,15 +108,13 @@ async function walkReports(page) {
   p.on('request', r => { if (r.url().includes('action=getAllAttendance')) getAll.push(r.url()); });
 
   const fechasEn = async () => p.evaluate(() => allDays.map(d => d.date));
-  const fechas30 = await fechasEn();
   check('rango por defecto: 30 días', await p.evaluate(() => rangoReportes), '30');
-  check('30 días: solo trae fechas recientes', fechas30,
-    ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18']);
+  check('30 días: solo trae las fechas de los últimos 30 días', await fechasEn(), fechas30);
 
   await p.click('#rango-row .pill[data-r="todos"]');
   await p.waitForTimeout(600);
   const fechasTodo = await fechasEn();
-  check('Todo: trae las 9 fechas', fechasTodo.length, 9);
+  check('Todo: trae todas las fechas', fechasTodo.length, F.FECHAS.length);
   check('30 días es un subconjunto de Todo',
     fechas30.every(f => fechasTodo.includes(f)), true);
   check('Todo: la request no lleva desde',
@@ -108,10 +122,11 @@ async function walkReports(page) {
 
   await p.click('#rango-row .pill[data-r="torneo"]');
   await p.waitForTimeout(600);
-  check('Torneo: corta en TORNEO_CUTOFF', await fechasEn(),
-    ['2026-07-14', '2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18']);
-  check('Torneo: la request lleva desde=2026-07-01',
-    getAll[getAll.length - 1].includes('desde=2026-07-01'), true);
+  check('Torneo: corta en TORNEO_CUTOFF', await fechasEn(), F.enRango(F.TORNEO_CUTOFF, ''));
+  check('Torneo: la request lleva desde=' + F.TORNEO_CUTOFF,
+    getAll[getAll.length - 1].includes('desde=' + F.TORNEO_CUTOFF), true);
+  check('Torneo: el fixture tiene algo antes del corte (si no, el check no prueba nada)',
+    F.FECHAS.some(f => f < F.TORNEO_CUTOFF), true);
 
   // Volver a un rango ya visto NO debe disparar otra request
   const antes = getAll.length;
@@ -162,7 +177,8 @@ async function walkReports(page) {
   await p.click('.nav button:nth-child(2)');
   await p.waitForTimeout(250);
   // El strip muestra los últimos 7 días con datos (el mock tiene 9)
-  check('día: 7 chips de fechas', await p.$$eval('.date-chip', e => e.length), 7);
+  check('día: chips de fechas (los últimos 7 con datos)',
+    await p.$$eval('.date-chip', e => e.length), Math.min(7, F.FECHAS.length));
   await p.click('.date-chip');
   await p.waitForSelector('.ro-row', { timeout: 10000 });
   check('día: 4 filas', await p.$$eval('.ro-row', e => e.length), 4);
@@ -171,18 +187,18 @@ async function walkReports(page) {
 
   // ===== XSS: nombres y observaciones son texto libre de la planilla =====
   // El nombre del jugador ya pasó por las 4 pestañas de reportes y por la
-  // vista por día. 2026-08-13 además tiene un justificado, así que trae la
+  // vista por día. FECHA_CON_OBS además tiene un justificado, así que trae la
   // observación maliciosa a pantalla.
   check('lector: el nombre malicioso se muestra como texto literal',
     (await p.textContent('#day-out')).includes(XSS_NOMBRE), true);
-  await p.fill('#day-date', '2026-08-13');
+  await p.fill('#day-date', F.FECHA_CON_OBS);
   await p.waitForSelector('.ro-obs', { timeout: 10000 });
   check('lector: la observación maliciosa se muestra como texto literal',
     (await p.textContent('.ro-obs')).includes('<script>window.__xss=1</script>'), true);
   check('lector: nada del payload se ejecutó',
     await p.evaluate(() => window.__xss), undefined);
 
-  await p.fill('#day-date', '2026-08-05');
+  await p.fill('#day-date', F.FECHA_SIN_DATOS);
   await p.waitForTimeout(900);
   check('día sin datos: mensaje correcto',
     (await p.textContent('#day-out')).includes('no hay asistencia cargada'), true);
