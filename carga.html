@@ -479,10 +479,17 @@ async function saveAttendance(){
       renderPendingBanner();
       fetchLoadedDates().then(()=>renderDatesStrip(pickDate)); // confirmar contra el servidor
       showSaveModal('ok',data.fecha,data.records.length);
-    }catch(netErr){
-      // Sin conexión: ya quedó guardado en el dispositivo, lo encolamos para subirlo solo después
-      queuePendingAction('saveAttendance',{data:data.records,overwrite:true},data.fecha,'Asistencia del '+formatDateLong(data.fecha));
-      showSaveModal('offline',data.fecha,data.records.length);
+    }catch(err){
+      if(esErrorDeRed(err)){
+        // Sin conexión: ya quedó guardado en el dispositivo, lo encolamos para subirlo solo después
+        queuePendingAction('saveAttendance',{data:data.records,overwrite:true},data.fecha,'Asistencia del '+formatDateLong(data.fecha));
+        showSaveModal('offline',data.fecha,data.records.length);
+      }else{
+        // El servidor respondió y rechazó el guardado. NO encolar: reintentarlo
+        // solo cada 60s no lo va a arreglar. El guardado local queda igual, así
+        // que no se pierde nada de lo cargado.
+        showSaveModal('error',data.fecha,data.records.length,err.message);
+      }
     }
   }catch(e){
     showSaveModal('error',data.fecha,0,e.message);
@@ -515,7 +522,9 @@ function showSaveModal(status,fecha,count,errMsg){
   } else {
     icon.textContent='⚠️';
     title.textContent='No se pudo guardar';
-    msg.textContent=`Hubo un problema guardando la asistencia del ${formatDateLong(fecha)}${errMsg?': '+errMsg:''}.`;
+    // El servidor rechazó el guardado (no es falta de conexión). Lo cargado
+    // sigue en el dispositivo, así que reintentar no obliga a cargar de nuevo.
+    msg.textContent=`La planilla rechazó la asistencia del ${formatDateLong(fecha)}${errMsg?': '+errMsg:''}. Lo que cargaste quedó guardado en este dispositivo — probá de nuevo.`;
     actions.innerHTML=`
       <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();saveAttendance();">Reintentar</button>
       <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
@@ -533,16 +542,43 @@ function goToReports(){
 }
 
 // ======================== ESCRITURAS + SINCRONIZACIÓN OFFLINE ========================
-// POST genérico al Apps Script. Con mode:'no-cors' no podemos leer la
-// respuesta, pero si el fetch tira una excepción es una señal confiable de
-// que no hay conexión (o no llegó a la red), que es justo lo que necesitamos
-// para decidir si encolar el cambio o no.
+// POST genérico al Apps Script.
+//
+// mode:'cors' (no 'no-cors') para poder LEER la respuesta. Con no-cors el
+// navegador devolvía una respuesta opaca y el fetch resolvía OK aunque el
+// Apps Script hubiera tirado una excepción o el deployment estuviera roto:
+// la app le mostraba "✅ guardado y sincronizado" al profe con la asistencia
+// en ningún lado.
+//
+// Funciona porque /exec responde un 302 hacia script.googleusercontent.com,
+// y ese destino manda Access-Control-Allow-Origin: * cuando el Web App está
+// deployado como "Cualquier persona". Content-Type text/plain mantiene el
+// POST como "simple request", así que no hay preflight OPTIONS (que GAS no
+// maneja bien).
 async function postToScript(action,payload){
-  await fetch(scriptUrl,{
-    method:'POST',mode:'no-cors',
-    headers:{'Content-Type':'text/plain'},
+  const res=await fetch(scriptUrl,{
+    method:'POST',mode:'cors',redirect:'follow',
+    headers:{'Content-Type':'text/plain'}, // text/plain evita el preflight OPTIONS
     body:JSON.stringify({action,...payload})
   });
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const json=await res.json();
+  // 'warning' no es un rechazo: addPlayer lo devuelve cuando el jugador ya
+  // existía en la planilla, y el alta local ya se hizo igual.
+  if(json.status!=='success'&&json.status!=='warning'){
+    throw new Error(json.message||'El servidor rechazó el guardado');
+  }
+  return json;
+}
+
+// Ahora postToScript tira en dos casos muy distintos y hay que separarlos:
+//   - No llegó a la red (sin conexión, DNS, servidor caído): encolar y
+//     reintentar solo cuando vuelva internet.
+//   - El servidor respondió con error: reintentar cada 60s con el mismo
+//     payload no lo va a arreglar. Hay que avisarle al profe.
+// El fetch tira TypeError cuando ni siquiera llegó a destino.
+function esErrorDeRed(e){
+  return !navigator.onLine || e instanceof TypeError;
 }
 
 function savePendingQueue(){localStorage.setItem('club_pending_queue',JSON.stringify(pendingQueue));}
@@ -582,6 +618,7 @@ async function trySyncPending(silent){
   syncingPending=true;
   renderPendingBanner();
   let synced=0;
+  const rechazados=[];
   const toTry=[...pendingQueue];
   for(const item of toTry){
     try{
@@ -589,17 +626,29 @@ async function trySyncPending(silent){
       pendingQueue=pendingQueue.filter(p=>p.id!==item.id);
       synced++;
     }catch(e){
-      // Sigue sin conexión (u otro error de red): lo dejamos en cola para el próximo intento
+      if(esErrorDeRed(e)){
+        // Sigue sin conexión: lo dejamos en cola para el próximo intento
+      }else{
+        // El servidor lo rechazó. Sacarlo de la cola: reintentarlo cada 60s
+        // con el mismo payload no lo va a arreglar nunca.
+        pendingQueue=pendingQueue.filter(p=>p.id!==item.id);
+        rechazados.push({label:item.label,message:e.message});
+      }
     }
   }
   savePendingQueue();
   syncingPending=false;
   renderPendingBanner();
+  if(rechazados.length){
+    // Este aviso sale siempre, aunque el intento haya sido automático: es un
+    // cambio que se descartó y el profe tiene que enterarse.
+    toast(`⚠️ La planilla rechazó ${rechazados.length} cambio${rechazados.length!==1?'s':''}: ${rechazados[0].message}`,'error');
+  }
   if(!pendingQueue.length){
-    if(!silent)toast(`✓ Se sincronizaron ${synced} cambio${synced!==1?'s':''} pendiente${synced!==1?'s':''}`,'success');
+    if(!silent&&synced)toast(`✓ Se sincronizaron ${synced} cambio${synced!==1?'s':''} pendiente${synced!==1?'s':''}`,'success');
   }else if(synced){
     if(!silent)toast(`✓ Se sincronizaron ${synced} de ${toTry.length}. Sigue sin conexión para el resto.`,'success');
-  }else if(!silent){
+  }else if(!silent&&!rechazados.length){
     toast('No se pudo sincronizar: revisá tu conexión','error');
   }
 }
@@ -683,8 +732,12 @@ async function confirmRename(id){
     savePendingQueue();renderPendingBanner();
     toast('Nombre actualizado','success');
   }catch(e){
-    queuePendingAction('renamePlayer',{id,newName,oldName},id,'Rename: '+oldName+' → '+newName);
-    toast('Nombre actualizado (se sincronizará cuando haya conexión)','success');
+    if(esErrorDeRed(e)){
+      queuePendingAction('renamePlayer',{id,newName,oldName},id,'Rename: '+oldName+' → '+newName);
+      toast('Nombre actualizado (se sincronizará cuando haya conexión)','success');
+    }else{
+      toast('Se renombró en el dispositivo, pero la planilla lo rechazó: '+e.message,'error');
+    }
   }
 }
 
@@ -697,8 +750,9 @@ async function addPlayer(){
 
   const btn=document.querySelector('.add-row button');
   btn.disabled=true;btn.textContent='...';
-  // El id lo genera el cliente: el guardado usa no-cors y no podemos leer
-  // la respuesta del servidor para recibir un id generado allá.
+  // El id lo sigue generando el cliente aunque ahora podamos leer el id que
+  // devuelve el servidor: el alta tiene que funcionar sin conexión, y ahí no
+  // hay respuesta que leer. El servidor usa el id que le mandamos.
   const id=genId();
   // Agregar localmente primero — así funciona aunque no haya conexión
   players.push({id,nombre:name});sortPlayers();savePlayers();
@@ -710,8 +764,12 @@ async function addPlayer(){
     savePendingQueue();renderPendingBanner();
     toast('Jugador agregado en Sheets','success');
   }catch(e){
-    queuePendingAction('addPlayer',{name,id},id,'Nuevo jugador: '+name);
-    toast('Jugador agregado (se sincronizará cuando haya conexión)','success');
+    if(esErrorDeRed(e)){
+      queuePendingAction('addPlayer',{name,id},id,'Nuevo jugador: '+name);
+      toast('Jugador agregado (se sincronizará cuando haya conexión)','success');
+    }else{
+      toast('Se agregó en el dispositivo, pero la planilla lo rechazó: '+e.message,'error');
+    }
   }finally{
     btn.disabled=false;btn.textContent='+';
   }
@@ -737,8 +795,12 @@ async function togglePlayerActivo(id){
     savePendingQueue();renderPendingBanner();
     toast(nowActive?'Jugador activado':'Jugador desactivado','success');
   }catch(e){
-    queuePendingAction('setPlayerActivo',{id,activo:nowActive,name:player.nombre},id,'Estado de '+player.nombre);
-    toast((nowActive?'Jugador activado':'Jugador desactivado')+' (se sincronizará cuando haya conexión)','success');
+    if(esErrorDeRed(e)){
+      queuePendingAction('setPlayerActivo',{id,activo:nowActive,name:player.nombre},id,'Estado de '+player.nombre);
+      toast((nowActive?'Jugador activado':'Jugador desactivado')+' (se sincronizará cuando haya conexión)','success');
+    }else{
+      toast('Se cambió en el dispositivo, pero la planilla lo rechazó: '+e.message,'error');
+    }
   }
 }
 

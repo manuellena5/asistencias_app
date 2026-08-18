@@ -180,6 +180,38 @@ async function walkReports(page) {
   check('lector: sin link a carga.html en Ajustes',
     await p.$$eval('a[href="carga.html"]', e => e.length), 0);
 
+  // ============ SERVIDOR QUE RECHAZA (el POST ya no es ciego) ============
+  // Con mode:'no-cors' este caso se veía como un guardado exitoso: el fetch
+  // resolvía igual y el profe leía "✅ ya se sincronizaron con la planilla".
+  console.log('\n=== carga.html contra un servidor que rechaza ===');
+  const errCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await errCtx.addInitScript(() => {
+    localStorage.setItem('club_script_url', 'http://localhost:8099/exec-error');
+    // Quién sos ya elegido, para que el picker no tape el formulario
+    localStorage.setItem('club_staff_id', 's1');
+    localStorage.setItem('club_staff_name', 'PEREZ JUAN');
+    localStorage.setItem('club_staff_cargo', 'DT');
+  });
+  const z = await errCtx.newPage();
+  attach(z, 'carga-error');
+  await z.goto(BASE + '/carga.html');
+  await z.waitForSelector('#boot-overlay', { state: 'detached', timeout: 20000 });
+  await z.click('.date-chip');
+  await z.waitForSelector('.player-card', { timeout: 10000 });
+  const fechaErr = await z.inputValue('#att-date');
+  await z.click('#btn-save');
+  await z.waitForSelector('#save-modal-overlay', { state: 'visible', timeout: 10000 });
+
+  check('error del servidor: modal de fallo',
+    (await z.textContent('#save-modal-title')).trim(), 'No se pudo guardar');
+  check('error del servidor: muestra el motivo que dio la planilla',
+    (await z.textContent('#save-modal-msg')).includes('La hoja Asistencias_App no existe'), true);
+  check('error del servidor: NO se encola (no sirve reintentar cada 60s)',
+    await z.evaluate(() => JSON.parse(localStorage.getItem('club_pending_queue') || '[]').length), 0);
+  check('error del servidor: el guardado local se conserva',
+    await z.evaluate(f => JSON.parse(localStorage.getItem('att_' + f) || '[]').length, fechaErr), 4);
+  await errCtx.close();
+
   // ================= PÁGINA PUENTE =================
   console.log('\n=== asistencias_app.html (puente) ===');
   const r = await ctx.newPage();

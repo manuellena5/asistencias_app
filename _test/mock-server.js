@@ -40,33 +40,47 @@ function recordsFor(fecha) {
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
+function json(res, out) {
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify(out));
+}
+
+// Respuesta de los GET, igual para /exec y /exec-error: lo que cambia entre
+// los dos endpoints es solo cómo contestan los POST.
+function handleGet(u) {
+  const action = u.searchParams.get('action');
+  if (action === 'getPlayers') return { status: 'success', count: PLAYERS.length, players: PLAYERS };
+  if (action === 'getStaff') return { status: 'success', count: STAFF.length, staff: STAFF };
+  if (action === 'getAttendanceDates') return { status: 'success', dates: FECHAS };
+  if (action === 'getAttendance') return { status: 'success', data: recordsFor(u.searchParams.get('fecha')) };
+  if (action === 'getAllAttendance') {
+    const all = [];
+    FECHAS.forEach(f => all.push(...recordsFor(f)));
+    return { status: 'success', count: all.length, data: all };
+  }
+  return { status: 'ok' };
+}
+
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
 
-  if (u.pathname === '/exec') {
+  // /exec-error simula un Apps Script que responde OK a nivel HTTP pero
+  // rechaza toda escritura. Es el caso que con mode:'no-cors' se veía como
+  // un guardado exitoso.
+  if (u.pathname === '/exec' || u.pathname === '/exec-error') {
+    const rechaza = u.pathname === '/exec-error';
     if (req.method === 'POST') {
       let body = '';
       req.on('data', c => body += c);
       req.on('end', () => {
-        console.log('  [mock] POST recibido:', body.slice(0, 120));
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ status: 'success' }));
+        console.log(`  [mock] POST recibido (${rechaza ? 'rechaza' : 'acepta'}):`, body.slice(0, 120));
+        json(res, rechaza
+          ? { status: 'error', message: 'La hoja Asistencias_App no existe' }
+          : { status: 'success' });
       });
       return;
     }
-    const action = u.searchParams.get('action');
-    let out = { status: 'ok' };
-    if (action === 'getPlayers') out = { status: 'success', count: PLAYERS.length, players: PLAYERS };
-    else if (action === 'getStaff') out = { status: 'success', count: STAFF.length, staff: STAFF };
-    else if (action === 'getAttendanceDates') out = { status: 'success', dates: FECHAS };
-    else if (action === 'getAttendance') out = { status: 'success', data: recordsFor(u.searchParams.get('fecha')) };
-    else if (action === 'getAllAttendance') {
-      const all = [];
-      FECHAS.forEach(f => all.push(...recordsFor(f)));
-      out = { status: 'success', count: all.length, data: all };
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(out));
+    json(res, handleGet(u));
     return;
   }
 

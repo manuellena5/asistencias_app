@@ -175,8 +175,9 @@ function saveAttendanceData(records, overwrite) {
 
 /**
  * Add a new player to the Jugadores sheet.
- * El ID lo genera el cliente (porque el guardado usa no-cors y no puede leer
- * la respuesta del servidor); si por algún motivo no llega, se genera acá.
+ * El ID lo genera el cliente (el alta tiene que funcionar sin conexión, así
+ * que no puede depender de la respuesta); si por algún motivo no llega, se
+ * genera acá.
  */
 function addNewPlayer(name, id) {
   try {
