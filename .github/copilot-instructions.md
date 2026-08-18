@@ -2,61 +2,107 @@
 
 ## Descripción del proyecto
 
-PWA de registro de asistencias para un club deportivo, alojada en **GitHub Pages** con backend en **Google Apps Script** conectado a **Google Sheets**.
+Dos PWAs de asistencias para un club deportivo, alojadas en **GitHub Pages** con backend en **Google Apps Script** conectado a **Google Sheets**.
 
-- **Frontend**: `asistencias_app.html` — app SPA completa en HTML/CSS/JS vanilla, sin frameworks.
-- **Backend**: `apps_script.js` — Google Apps Script deployado como Web App pública.
-- **Service Worker**: `sw.js` — estrategia cache-first para el app shell. Nunca cachea llamadas a GAS/Sheets.
-- **Manifest**: `manifest.json` — configuración PWA.
+La app original (`asistencias_app.html`, un solo archivo) se dividió en **dos apps separadas** que comparten el mismo Sheet, el mismo Apps Script y el mismo `localStorage`.
 
----
+**La división es por permiso de escritura, no por información.** Las dos apps muestran exactamente los mismos reportes. La única diferencia es que desde la app de consulta no se puede modificar nada.
 
-## Funcionalidades actuales
+| Archivo | Qué es | Quién la usa |
+|---|---|---|
+| `index.html` | App de **consulta** (solo lectura): reportes + asistencia por día | Dirigentes, jugadores, cualquiera |
+| `carga.html` | App de **carga**: asistencia + reportes + plantel | Cuerpo técnico (profes) |
+| `reports.js` | Pantalla de Reportes completa (markup + lógica) | **Ambas** |
+| `common.js` | Estado, lecturas GET, resolución de nombres, fechas, navegación | Ambas |
+| `common.css` | Estilos compartidos | Ambas |
+| `sw.js` | Service Worker único (raíz) que cubre las dos apps | Ambas |
+| `manifest.json` | PWA de consulta (azul, `start_url: ./index.html`) | — |
+| `manifest-carga.json` | PWA de carga (verde, `start_url: ./carga.html`) | — |
+| `icon.svg` / `icon-carga.svg` | Íconos distintos para que se distingan en el celular | — |
+| `apps_script.js` | Código GAS (se copia/pega en el editor de GAS) | — |
+| `asistencias_app.html` | **Página puente**: dos botones para elegir app | Migración de installs viejos |
 
-### Pantalla Asistencia (tab activo por defecto)
-- El usuario elige una fecha con un `<input type="date">`.
-- Al cambiar la fecha, se consulta al backend si ya tiene datos para ese día (`getAttendance`). El resultado se cachea en `cachedDateData{}` (memoria de sesión).
-- Se muestra un banner de estado: "datos cargados" o "sin datos para esta fecha".
-- Se muestra un botón para cargar la lista de jugadores.
-- Al hacer clic, la lista se renderiza instantáneamente desde el caché.
-- Cada jugador tiene botones de estado: **P** (Presente), **A** (Ausente), **J** (Justificado).
-- Si la fecha tiene datos previos, se pre-cargan (`applyFormData`). Si no, se usa el estado por defecto configurado.
-- El botón Guardar envía todos los registros al backend (`saveAttendance` con `overwrite: true`).
-- Las notificaciones usan `navigator.serviceWorker.ready.then(reg => reg.showNotification(...))` — nunca `new Notification()`.
+### Pantallas
 
-### Pantalla Reportes
-- Carga todos los registros históricos (`getAllAttendance`).
-- Muestra estadísticas de presencia por jugador (días P / días J / días A / total).
-- Filtro por rangos de fecha.
-
-### Pantalla Jugadores
-- Lista los jugadores desde la hoja **Jugadores** del Sheet (fuente de verdad).
-- Permite agregar jugadores nuevos (`addPlayer`). Se escribe en columna A (Nombre) solamente.
-- No permite eliminar jugadores desde la app.
-- Los jugadores se cachean en `localStorage` (`club_players_v2`) con TTL de 1 hora.
-
-### Pantalla Configuraciones
-- Campo para ingresar y guardar la URL del Web App de Google Apps Script.
-- Selector de **estado por defecto** (A — Ausente / P — Presente) para días sin datos.
-- Ambos valores se persisten en `localStorage`.
+| | `index.html` (consulta) | `carga.html` (profes) |
+|---|---|---|
+| Asistencia (formulario P / E-A / J / A) | — | ✅ |
+| Reportes (semanal / mensual / jugador / totales) | ✅ | ✅ |
+| Por día (detalle solo lectura) | ✅ | — (lo cubre el formulario) |
+| Jugadores (alta, renombre, activo/inactivo) | — | ✅ |
+| Ajustes | mínimos | completos |
 
 ---
 
-## REGLA CRÍTICA: Versión del Service Worker
+## REGLA CRÍTICA 1: el lector nunca escribe
 
-> **Cada vez que se modifique cualquier archivo del proyecto (`asistencias_app.html`, `sw.js`, `manifest.json`, `apps_script.js`), se DEBE incrementar el número de versión del caché en `sw.js`.**
+`index.html`, `common.js` y `reports.js` **no pueden hacer POST** al Apps Script. Solo GET:
+`getAllAttendance`, `getAttendance`, `getAttendanceDates`, `getPlayers`, `getStaff`.
+
+Todas las escrituras (`saveAttendance`, `addPlayer`, `setPlayerActivo`, `renamePlayer`) viven **solo** en `carga.html`, junto con la cola offline (`pendingQueue`).
+
+Si estás por agregar un POST, preguntate en qué archivo va. Si la respuesta es `index.html`, `common.js` o `reports.js`, va en `carga.html`.
+
+> ⚠️ **Esta separación es de UX, no de seguridad.** El Apps Script está deployado como "Cualquier persona" y acepta POST sin autenticación: quien abra la consola puede escribir igual. Si en algún momento hace falta seguridad real, hay que agregar un token en los `case` de `doPost` validado contra `PropertiesService`, y que el profe lo cargue una vez desde Config (nunca hardcodeado en el HTML — el repo es público).
+
+## REGLA CRÍTICA 2: versión del Service Worker
+
+> **Cada vez que se modifique cualquier archivo (`index.html`, `carga.html`, `common.js`, `reports.js`, `common.css`, `sw.js`, los manifests, `apps_script.js`), se DEBE incrementar el número de versión del caché en `sw.js`.**
 
 ```js
-// sw.js — línea 1
-const CACHE_NAME = 'asistencias-v13'; // <- incrementar este número
+const CACHE_NAME = 'asistencias-v29'; // <- incrementar este número
 ```
 
-**Por qué es obligatorio:** El SW usa estrategia cache-first. Sin cambiar la versión, los usuarios (especialmente en mobile instalado como PWA) seguirán viendo la versión anterior indefinidamente.
+**Por qué es obligatorio:** el SW usa estrategia cache-first. Sin cambiar la versión, los usuarios (especialmente en mobile con la PWA instalada) siguen viendo la versión anterior indefinidamente.
 
-Patrón a seguir al editar:
-1. Hacer el cambio en el archivo correspondiente.
-2. Cambiar `asistencias-vN` → `asistencias-v(N+1)` en `sw.js`.
-3. Nunca saltarse este paso, aunque el cambio sea cosmético.
+Patrón al editar:
+1. Hacer el cambio.
+2. `asistencias-vN` → `asistencias-v(N+1)` en `sw.js`.
+3. Si agregaste un archivo nuevo, sumarlo también a `CACHED_URLS`.
+4. Nunca saltarse este paso, aunque el cambio sea cosmético.
+
+## REGLA CRÍTICA 3: los reportes van en `reports.js`, no en el HTML
+
+Las dos apps muestran los mismos reportes. Para que no puedan quedar desincronizadas, `reports.js` trae **también el markup**: cada HTML solo declara el contenedor vacío
+
+```html
+<div id="scr-reports" class="screen"></div>
+```
+
+y llama a `initReportsScreen()` en el `DOMContentLoaded`. Nunca copiar el HTML de las pestañas de reportes dentro de un `.html`.
+
+---
+
+## Cómo se reparten las responsabilidades
+
+### `common.js` — base compartida
+- Constantes: `APP_VERSION`, `SHEET_ID`, `DEFAULT_SCRIPT_URL`, `DIAS_C/L`, `MESES`, `ALIASES`, `TORNEO_CUTOFF`, `ESTADO_LABEL`.
+- Estado: `players`, `inactiveSet`, `dynamicAliases`, `scriptUrl`, `staffList`, `cachedDateData`, `loadedDates`, `rawAllDays`, `allDays`, `allObs`, `torneoFilter`.
+- Lecturas: `loadPlayersFromSheet()`, `loadStaffFromSheet()`, `fetchLoadedDates()`, `fetchAttendanceForDate(fecha)`, `fetchAllAttendance()`.
+- Resolución de nombres: `normName()`, `resolvePlayerKey()`, `displayName()`.
+- Fechas: `todayStr()`, `localTimestamp()`, `weekKey()`, `getWeekDays()`, `formatDate*()`, `formatWeek()`, `formatMonth()`.
+- UI: `toast()`, `hideBootOverlay()`, `go()`, `renderDatesStrip(onPick)`, `forceUpdate()`.
+
+Cada app define `SCREEN_TITLES` y (opcional) `onScreenChange(screen)`, que `go()` invoca.
+
+**Hook `pendingSaveGuard`:** `common.js` lo define como `() => false`. `carga.html` lo reemplaza por `hasPendingSaveFor` para que `fetchAttendanceForDate` no pise un guardado local que todavía no subió a Sheets. El lector lo deja en `false` porque nunca guarda nada.
+
+### `reports.js` — pantalla de Reportes
+- `initReportsScreen()` inyecta el markup en `#scr-reports`.
+- `loadReports()` trae el historial y renderiza. Ambas apps la llaman al arrancar y desde `onScreenChange`.
+- `invalidateReports()` marca los datos como vencidos → la próxima vez que se entre a Reportes se vuelven a traer del servidor.
+- Estado propio: `reportView`, `weekIdx`, `semanalShowAll`, `semanalSortBy`, `totalesAsc`, `reportsLoaded`.
+- Renderers: `renderWeekly()`, `renderMonthly()`, `renderPlayer()`, `renderTotales()`.
+
+**Cuándo llamar a `invalidateReports()`:** después de cualquier cosa que cambie lo que los reportes muestran. En `carga.html` ya está en `saveAttendance()`, `addPlayer()`, `confirmRename()` y `togglePlayerActivo()`. Si agregás otra mutación, sumala.
+
+### `carga.html` — profes
+Mantiene: cola offline (`pendingQueue`), sincronización automática (`online` + cada 60s), modal de confirmación, picker de cuerpo técnico, notificaciones.
+
+Usa **verde** (`--primary:#065f46`) para distinguirse visualmente del lector (azul).
+
+### `localStorage` compartido
+Las dos apps viven en el mismo origen de GitHub Pages, así que comparten `localStorage`. La lista de jugadores, `club_script_url` y `club_torneo_filter` se cachean una vez y sirven para ambas. Claves: `club_players`, `club_inactive_players`, `club_name_aliases`, `club_script_url`, `club_staff`, `club_staff_id/name/cargo`, `club_default_status`, `club_torneo_filter`, `club_pending_queue`, `att_<fecha>`.
 
 ---
 
@@ -66,7 +112,7 @@ Patrón a seguir al editar:
 
 - `ContentService.TextOutput` **NO soporta** `.setHeader()`. Llamarlo lanza `TypeError` que rompe toda la respuesta. **Nunca usar `.setHeader()`**.
 - GAS maneja CORS automáticamente cuando el Web App está deployado como "Anyone can access".
-- Las fechas en Sheets se deserializan como objetos `Date` de JavaScript, no como strings. Siempre normalizar con el helper `normalizeFecha()`:
+- Las fechas en Sheets se deserializan como objetos `Date` de JavaScript, no como strings. Siempre normalizar con `normalizeFecha()`:
   ```js
   const dateStr = normalizeFecha(cellFecha);
   ```
@@ -76,104 +122,85 @@ Patrón a seguir al editar:
 
 ### Endpoints actuales
 
-| Método | action | Descripción |
-|--------|--------|-------------|
-| GET | `getAttendance&fecha=YYYY-MM-DD` | Registros de un día específico |
-| GET | `getAttendanceDates` | Lista de fechas únicas con datos (ligero) |
-| GET | `getAllAttendance` | Todos los registros históricos |
-| GET | `getPlayers` | Lista de jugadores |
-| POST | `saveAttendance` | Guarda asistencia (con `overwrite: true` reemplaza el día) |
-| POST | `addPlayer` | Agrega jugador nuevo |
+| Método | action | Descripción | Quién lo usa |
+|--------|--------|-------------|--------------|
+| GET | `getAttendance&fecha=YYYY-MM-DD` | Registros de un día específico | ambas |
+| GET | `getAttendanceDates` | Lista de fechas únicas con datos (ligero) | ambas |
+| GET | `getAllAttendance` | Todos los registros históricos | ambas (reportes) |
+| GET | `getPlayers` | Lista de jugadores (con `id` y `activo`) | ambas |
+| GET | `getStaff` | Cuerpo técnico habilitado | ambas |
+| POST | `saveAttendance` | Guarda asistencia (`overwrite:true` reemplaza el día) | **solo carga** |
+| POST | `addPlayer` | Agrega jugador nuevo | **solo carga** |
+| POST | `setPlayerActivo` | Activa/desactiva jugador | **solo carga** |
+| POST | `renamePlayer` | Renombra jugador | **solo carga** |
 
 ### Estructura de Sheets
 
-**Asistencias_App**: `Timestamp | Fecha | Jugador | Estado | Observación`
+**Asistencias_App**: `Timestamp | Fecha | Jugador | Estado | Observación | JugadorID | CargadoPorNombre | CargadoPorID`
 
-**Jugadores**: `Nombre | Litros/dia | Vianda | Remis | Monto Remis | Fecha`
-(La app solo lee/escribe columna A — Nombre)
+**Jugadores**: `Nombre | Activo | ID` (`Activo` vacío = activo, `NO` = inactivo)
 
----
+**CuerpoTecnico**: `Nombre | Cargo | Habilitado | ID`
 
-## Variables de estado clave (frontend)
-
-```js
-let players = [];             // lista desde Sheets, cacheada en localStorage
-let scriptUrl = '';           // URL del Web App GAS, guardada en localStorage
-let defaultStatus = 'A';      // 'A' o 'P', guardada en localStorage
-let cachedDateData = {};       // {fecha: records[]} — caché en memoria por sesión
-let loadedDates = new Set();   // fechas con datos, para chips de navegación
-let allDays = [];              // datos para reportes
-let allObs = {};               // observaciones para estado J
-```
+Los IDs se autogeneran del lado GAS si faltan (backfill en `getPlayersData` / `getStaffData`).
 
 ---
 
 ## Patrones de desarrollo establecidos
 
-### Llamadas al backend
+### Lecturas (ambas apps)
 ```js
-// Siempre usar la variable scriptUrl como base
-const res = await fetch(`${scriptUrl}?action=getAttendance&fecha=${fecha}`);
-const json = await res.json();
-if (json.status !== 'success') throw new Error(json.message);
+// Siempre a través de los helpers de common.js
+const records = await fetchAttendanceForDate(fecha);
+const res = await fetchAllAttendance(); // llena rawAllDays / allObs
 ```
 
-### Caché de jugadores (localStorage)
+### Escrituras (solo carga.html)
 ```js
-const CACHE_KEY = 'club_players_v2';
-const CACHE_TTL = 3600000; // 1 hora
-// Siempre verificar TTL antes de usar el caché
+// no-cors: no podemos leer la respuesta, pero una excepción es señal
+// confiable de "no hay conexión" → encolar el cambio
+try {
+  await postToScript('saveAttendance', { data: records, overwrite: true });
+} catch (e) {
+  queuePendingAction('saveAttendance', { data: records, overwrite: true }, fecha, label);
+}
+invalidateReports(); // los reportes en memoria quedaron viejos
 ```
+
+### Identidad de jugadores
+Cada jugador tiene un `id` estable. Los registros de asistencia guardan `JugadorID`, así que renombrar a alguien no rompe el historial. `resolvePlayerKey(record)` devuelve el id si lo reconoce, o `'NAME:xxx'` como fallback para registros viejos sin `JugadorID`; el objeto `ALIASES` + `dynamicAliases` resuelve esos casos por nombre.
 
 ### Notificaciones en PWA instalada
 ```js
 // CORRECTO — funciona cuando el SW está activo
-navigator.serviceWorker.ready.then(reg =>
-  reg.showNotification('Título', { body: 'Mensaje' })
-);
+navigator.serviceWorker.ready.then(reg => reg.showNotification('Título', { body: 'Mensaje' }));
 // INCORRECTO — lanza "Illegal constructor" con SW activo
 new Notification('Título');
 ```
 
-### Alias de jugadores
-El objeto `ALIASES` normaliza nombres inconsistentes entre registros históricos y la lista actual:
-```js
-const ALIASES = {
-  'DIAZ JONATAN CHANCLA': 'DIAZ JONATAN',
-  // ...
-};
-```
-Usar siempre la función `norm()` al comparar nombres de jugadores.
+---
+
+## Gotchas frecuentes
+
+- **CORS**: GAS lo maneja solo si el Web App es público. No agregar headers manuales.
+- **Fechas en GAS**: normalizar siempre con `normalizeFecha()`; nunca `toISOString()`.
+- **Fechas en el cliente**: "hoy" se calcula con `todayStr()`, que usa hora local. `new Date().toISOString()` da el día siguiente después de las 21:00 en Argentina. Lo mismo vale para `weekKey()` y `getWeekDays()`, que arman las fechas con `getFullYear/getMonth/getDate` locales.
+- **SW caché stale**: siempre versionar `CACHE_NAME` en cada cambio, y sumar los archivos nuevos a `CACHED_URLS`.
+- **Reportes desactualizados tras guardar**: si agregás una mutación nueva en `carga.html`, llamá a `invalidateReports()`.
+- **Re-deploy GAS**: guardar el archivo en GAS no es suficiente; hay que hacer "New deployment" o "Manage deployments → Deploy new version".
+- **Límites de GAS**: 6 minutos de ejecución por invocación, 20k llamadas/día en cuenta gratuita.
+- **`asistencias_app.html`**: no borrarlo hasta que todos hayan reinstalado la app que les corresponde — es la URL que abren las PWAs viejas ya instaladas.
 
 ---
 
-## Guía para apps similares en GitHub Pages + Google Apps Script
+## Cómo probar local
 
-### Estructura mínima recomendada
-```
-index.html          # App SPA
-sw.js               # Service Worker
-manifest.json       # PWA manifest
-apps_script.js      # Código GAS (se copia/pega en el editor de GAS)
-.github/
-  copilot-instructions.md
+Hay un servidor de prueba con un Apps Script simulado en `_test/`:
+
+```bash
+npm i -D playwright            # una sola vez
+node _test/mock-server.js      # terminal 1 → http://localhost:8099
+node _test/run.js              # terminal 2 → suite de humo
 ```
 
-### Checklist de setup
-1. **Google Sheets**: crear hoja con las columnas necesarias. Anotar el `SHEET_ID` (está en la URL).
-2. **Google Apps Script**: crear proyecto en script.google.com, pegar `apps_script.js`, deployar como Web App.
-   - Ejecutar como: tu cuenta Google.
-   - Quién tiene acceso: Cualquier persona (para que la PWA pueda llamarlo sin auth).
-3. **Frontend**: guardar la URL del deployment en el campo de Configuraciones de la app.
-4. **Service Worker**: registrar en el HTML, nunca cachear las URLs de GAS/Sheets.
-5. **GitHub Pages**: activar en Settings → Pages → rama `main`, carpeta raíz.
-6. **Primer deploy**: verificar que el SW se instala, que el manifest es válido, y que las llamadas al backend funcionan.
-
-### Gotchas frecuentes
-- **CORS**: GAS lo maneja solo si el Web App es público. No agregar headers manuales.
-- **Fechas en GAS**: normalizar siempre con `normalizeFecha()` antes de comparar; nunca `toISOString()` (es UTC y corre el día).
-- **Fechas en el cliente**: "hoy" se calcula con `todayStr()`, que usa hora local. `new Date().toISOString()` da el día siguiente después de las 21:00 en Argentina.
-- **SW caché stale**: siempre versionar `CACHE_NAME` en cada cambio.
-- **Notificaciones**: usar `reg.showNotification()` vía SW, no el constructor directo.
-- **Re-deploy GAS**: guardar el archivo en GAS no es suficiente; hay que hacer "New deployment" o "Manage deployments → Deploy new version".
-- **Límites de GAS**: 6 minutos de ejecución por invocación, 20k llamadas/día en cuenta gratuita.
+La suite verifica, entre otras cosas, que **los reportes de las dos apps sean idénticos** y que la app de consulta no mande ni un solo POST. `_test/` no forma parte de la app y no se sirve en producción.

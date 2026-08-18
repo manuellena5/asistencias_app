@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#065f46">
+<link rel="icon" href="icon-carga.svg">
+<link rel="manifest" href="manifest-carga.json">
+<link rel="stylesheet" href="common.css">
+<title>Cargar Asistencia</title>
+<style>
+/* La app de carga usa verde como color principal para distinguirla
+   de un vistazo de la app de consulta (azul). */
+:root{--primary:#065f46;--primary-light:#0f766e;--primary-dark:#043d2e}
+</style>
+</head>
+<body>
+
+<!--
+  ============================================================
+  carga.html — APP DEL CUERPO TÉCNICO (carga de asistencia)
+
+  Esta es la única app que ESCRIBE en la planilla. Todos los POST
+  al Apps Script (saveAttendance, addPlayer, setPlayerActivo,
+  renamePlayer) viven acá.
+
+  Funciona sin conexión: lo que se carga queda en localStorage y
+  se sube solo cuando vuelve internet (ver pendingQueue).
+
+  Los reportes viven en index.html.
+  ============================================================
+-->
+
+<div id="boot-overlay">
+  <div class="sp" style="width:36px;height:36px;border-width:4px"></div>
+  <span>Cargando...</span>
+</div>
+
+<div class="header">
+  <h1 id="hdr-title">Asistencias</h1>
+  <small id="hdr-sub">Registrar asistencia</small>
+</div>
+
+<div class="main">
+  <!-- ===== FORM ===== -->
+  <div id="scr-form" class="screen active">
+    <div class="pending-banner" style="display:none"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="date" id="att-date" class="date-input" style="margin-bottom:0" onchange="onDateChange(this.value)">
+      <button class="btn-sm btn-sec" style="min-height:48px;flex-shrink:0" onclick="setToday()">Hoy</button>
+    </div>
+    <div id="dates-strip" class="dates-strip">
+      <div class="strip-lbl">📋 Últimos días cargados:</div>
+      <div id="dates-chips" class="chips"></div>
+    </div>
+    <div id="status-card"></div>
+    <div id="form-body" style="display:none">
+      <div class="legend">
+        <span class="lg-lbl">Referencias:</span>
+        <span class="item"><span class="dot P">P</span> Presente</span>
+        <span class="item"><span class="dot EA">E/A</span> Entrena Afuera</span>
+        <span class="item"><span class="dot J">J</span> Justificado</span>
+        <span class="item"><span class="dot A">A</span> Ausente</span>
+      </div>
+      <div id="att-list"></div>
+      <button class="btn btn-primary" id="btn-save" onclick="saveAttendance()">Guardar Asistencia</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:6px" onclick="resetForm()">Cambiar fecha</button>
+    </div>
+  </div>
+
+  <!-- ===== REPORTES (el markup lo inyecta reports.js) ===== -->
+  <div id="scr-reports" class="screen"></div>
+
+  <!-- ===== PLAYERS ===== -->
+  <div id="scr-players" class="screen">
+    <div class="add-row">
+      <input type="text" id="new-name" placeholder="Nombre y Apellido">
+      <button class="btn btn-primary" onclick="addPlayer()">+</button>
+    </div>
+    <div id="mgmt-list"></div>
+  </div>
+
+  <!-- ===== CONFIG ===== -->
+  <div id="scr-config" class="screen">
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-hdr">👤 Cuerpo Técnico</div>
+      <div style="padding:14px">
+        <div id="staff-cfg-current" style="margin-bottom:12px"></div>
+        <button class="btn btn-primary" onclick="openStaffPicker(false)">Cambiar quién sos</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hdr">📋 Estado por defecto en Asistencia</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">Estado inicial de cada jugador cuando se carga un día sin datos.</p>
+        <div style="display:flex;gap:10px">
+          <label style="flex:1;display:flex;align-items:center;gap:8px;padding:12px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer" id="lbl-default-A">
+            <input type="radio" name="default-status" value="A" onchange="saveDefaultStatus(this.value)" style="width:18px;height:18px;accent-color:var(--red)">
+            <span style="font-weight:600;color:var(--red-text)">A — Ausente</span>
+          </label>
+          <label style="flex:1;display:flex;align-items:center;gap:8px;padding:12px;border:2px solid var(--border);border-radius:var(--radius);cursor:pointer" id="lbl-default-P">
+            <input type="radio" name="default-status" value="P" onchange="saveDefaultStatus(this.value)" style="width:18px;height:18px;accent-color:var(--green)">
+            <span style="font-weight:600;color:var(--green-text)">P — Presente</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-hdr">📶 Sincronización</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">La app funciona sin conexión: lo que cargues se guarda en el dispositivo y se sube solo a la planilla apenas haya internet.</p>
+        <div class="pending-banner" style="display:none;margin-bottom:0"></div>
+        <p style="font-size:.8rem;color:var(--gray);display:none" id="no-pending-msg">✓ No hay cambios pendientes de sincronizar.</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-hdr">🔄 Actualización</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">Si hiciste cambios y la app sigue mostrando la versión vieja, usá este botón para limpiar el caché y forzar la descarga de la última versión.</p>
+        <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
+      </div>
+    </div>
+    <details class="card" style="margin-top:12px">
+      <summary style="padding:14px;cursor:pointer;font-weight:700;color:#1f2937;list-style:none" class="card-hdr">⚙️ Apps Script (avanzado)</summary>
+      <div style="padding:0 14px 14px">
+        <label style="display:block;font-weight:600;font-size:.85rem;margin-bottom:6px">URL del Web App</label>
+        <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/..." style="width:100%;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:.85rem;margin-bottom:8px;font-family:inherit">
+        <p style="font-size:.75rem;color:var(--gray);margin-bottom:10px">Pegá la URL del Web App desplegado en Google Apps Script.</p>
+        <button class="btn btn-primary" onclick="saveCfg()">Guardar URL</button>
+        <p style="font-size:.75rem;color:var(--gray);margin-top:10px;padding:8px;background:var(--gray-light);border-radius:6px;border-left:3px solid var(--border)">ℹ️ La app ya viene con una URL configurada por defecto — no hace falta tocar esto. Solo modificá si se te indica hacerlo.</p>
+      </div>
+    </details>
+    <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer"></p>
+  </div>
+</div>
+
+<div class="nav">
+  <button class="active" onclick="go('form',this)"><span class="ico">📋</span>Asistencia</button>
+  <button onclick="go('reports',this)"><span class="ico">📊</span>Reportes</button>
+  <button onclick="go('players',this)"><span class="ico">👥</span>Jugadores</button>
+  <button onclick="go('config',this)"><span class="ico">⚙️</span>Config</button>
+</div>
+
+<div id="save-modal-overlay" class="modal-overlay">
+  <div class="modal-box">
+    <div class="m-ico" id="save-modal-icon">✅</div>
+    <div class="m-title" id="save-modal-title">Asistencia guardada</div>
+    <div class="m-msg" id="save-modal-msg"></div>
+    <div id="save-modal-actions"></div>
+  </div>
+</div>
+
+<div id="staff-picker-overlay" class="modal-overlay" style="z-index:400">
+  <div class="modal-box">
+    <div class="m-ico">👤</div>
+    <div class="m-title">¿Quién sos?</div>
+    <div class="m-msg" style="margin-bottom:14px">Elegí tu nombre para que quede registrado quién cargó la asistencia.</div>
+    <div id="staff-picker-list" style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto"></div>
+    <button class="btn" id="staff-picker-cancel" style="background:var(--gray-light);color:var(--gray);margin-top:14px;display:none" onclick="closeStaffPicker()">Cancelar</button>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script src="reports.js"></script>
+<script>
+// ======================== ESTADO LOCAL DE ESTA APP ========================
+let defaultStatus=localStorage.getItem('club_default_status')||'A';
+// Cola de cambios que no se pudieron mandar al Apps Script (sin conexión).
+// Se reintentan solos cuando vuelve la conexión, al abrir la app, y cada 60s.
+let pendingQueue=JSON.parse(localStorage.getItem('club_pending_queue')||'[]');
+// Quién es "vos" en este dispositivo (la lista staffList vive en common.js).
+let myStaffId=localStorage.getItem('club_staff_id')||'';
+let myStaffName=localStorage.getItem('club_staff_name')||'';
+let myStaffCargo=localStorage.getItem('club_staff_cargo')||'';
+let editingPlayer=null; // id del jugador que se está renombrando ahora mismo (o null)
+
+// common.js consulta este hook antes de pisar el respaldo offline de una fecha
+// con lo que devuelve el servidor.
+pendingSaveGuard=hasPendingSaveFor;
+
+SCREEN_TITLES={
+  form:{title:'Asistencias',sub:'Registrar asistencia'},
+  reports:{title:'Reportes',sub:'Ver estadísticas'},
+  players:{title:'Jugadores',sub:'Gestionar plantel'},
+  config:{title:'Configuración',sub:'Ajustes de la app'}
+};
+
+function onScreenChange(screen){
+  if(screen==='form')clearForm();
+  // Los reportes se traen la primera vez que se entra, y se vuelven a traer
+  // después de guardar una asistencia (invalidateReports los marca vencidos).
+  if(screen==='reports'&&!reportsLoaded)loadReports();
+}
+
+// ======================== INIT ========================
+document.addEventListener('DOMContentLoaded',async()=>{
+  // La fecha arranca vacía a propósito: no queremos abrir ninguna asistencia
+  // sola sin que el usuario elija explícitamente una fecha (o toque el acceso
+  // rápido "Cargar las asistencias de hoy").
+  initReportsScreen();
+  document.getElementById('cfg-url').value=scriptUrl;
+  document.getElementById('version-footer').textContent='v'+APP_VERSION+' · Carga';
+  document.querySelectorAll('input[name="default-status"]').forEach(r=>{
+    r.checked=(r.value===defaultStatus);
+  });
+  highlightDefaultLabel();
+
+  document.getElementById('mgmt-list').innerHTML='<div class="loading"><div class="sp"></div><span>Cargando...</span></div>';
+  const okPlayers=await loadPlayersFromSheet();
+  if(!okPlayers){
+    if(!players.length){
+      toast(scriptUrl?'Sin conexión — no se pudo cargar la lista de jugadores':'Configurá la URL del Apps Script para cargar los jugadores','error');
+    } else {
+      toast('Usando lista en caché (sin conexión)','error');
+    }
+  }
+
+  await loadStaffFromSheet();
+  renderStaffCfg();
+
+  renderMgmt();
+  await fetchLoadedDates(); // chips y estado de "hoy" listos antes de mostrar la pantalla
+  renderDatesStrip(pickDate);
+  renderPendingBanner();
+  trySyncPending(true); // por si quedó algo pendiente de una sesión sin conexión
+  await showEmptyState();
+  requestNotificationPermission();
+
+  // Primera vez en este dispositivo: pedir que elija quién es antes de
+  // dejarlo cargar asistencia. Si no hay lista de personas habilitadas
+  // (por ejemplo, sin conexión en el primer uso), no bloqueamos.
+  if(!myStaffId) openStaffPicker(true);
+
+  hideBootOverlay();
+});
+
+// ======================== NAVEGACIÓN / FECHA ========================
+function clearForm(){
+  document.getElementById('att-date').value='';
+  document.getElementById('form-body').style.display='none';
+  showEmptyState();
+}
+
+function setToday(){
+  const d=todayStr();
+  document.getElementById('att-date').value=d;
+  onDateChange(d);
+}
+
+function pickDate(d){
+  document.getElementById('att-date').value=d;
+  if(cachedDateData.hasOwnProperty(d)){
+    loadDateData(d);
+  } else {
+    onDateChange(d).then(()=>loadDateData(d));
+  }
+}
+
+// Estado vacío (sin fecha elegida) + acceso rápido a la asistencia de hoy
+async function showEmptyState(){
+  renderStatusCard('empty');
+  await renderTodayQuickAccess();
+}
+
+async function renderTodayQuickAccess(){
+  const container=document.getElementById('today-quick');
+  if(!container)return;
+  const fecha=todayStr();
+  const records=await fetchAttendanceForDate(fecha);
+
+  // Si mientras se hacía el fetch el usuario ya eligió otra fecha o cambió de pantalla, no pisar nada
+  const c2=document.getElementById('today-quick');
+  if(!c2)return;
+
+  const hasData=records&&records.length>0;
+  if(hasData){
+    const cargadoPor=records[0].cargadoPorNombre;
+    c2.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600;margin-bottom:10px">✅ Ya hay datos cargados para hoy${cargadoPor?`<div style="font-weight:400;font-size:.78rem;margin-top:2px">Cargado por: ${cargadoPor}</div>`:''}</div>
+      <button class="btn btn-primary" style="margin-top:0" onclick="openToday()">Ver / Editar asistencia de hoy</button>`;
+  } else {
+    c2.innerHTML=`<button class="btn btn-primary" style="margin-top:0" onclick="openToday()">📋 Cargar las asistencias de hoy</button>`;
+  }
+}
+
+function openToday(){
+  const fecha=todayStr();
+  document.getElementById('att-date').value=fecha;
+  loadDateData(fecha);
+}
+
+// ======================== FORM ========================
+// Estado único de la tarjeta de estado (reemplaza placeholder + checking + botón + banner)
+function renderStatusCard(state,fecha,records){
+  const c=document.getElementById('status-card');
+  const cargadoPor=(records&&records.length&&records[0].cargadoPorNombre)?records[0].cargadoPorNombre:'';
+  const cargadoPorHtml=cargadoPor?`<div style="font-size:.75rem;color:var(--gray);margin-top:4px">Cargado por: ${cargadoPor}</div>`:'';
+  if(state==='empty'){
+    c.className='form-placeholder';
+    c.style.padding='';
+    c.innerHTML='<div class="ico-big">📅</div><p>Elegí una fecha<br>para cargar la asistencia</p><div id="today-quick" style="margin-top:16px"></div>';
+  } else if(state==='checking'){
+    c.className='card';
+    c.style.padding='14px';
+    c.innerHTML=`<div style="display:flex;align-items:center;gap:10px">
+      <div style="width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
+      <span style="font-size:.9rem;color:var(--gray);font-weight:500">Verificando ${formatDateLong(fecha)}...</span>
+    </div>`;
+  } else if(state==='prompt-new'){
+    c.className='card';
+    c.style.padding='16px';
+    c.innerHTML=`<div style="text-align:center">
+      <div style="font-size:.85rem;color:var(--gray);margin-bottom:10px">📝 <strong style="color:#1f2937">${formatDateLong(fecha)}</strong> todavía no tiene asistencia cargada</div>
+      <button class="btn btn-primary" style="margin-top:0" onclick="loadDateData('${fecha}')">Cargar asistencia</button>
+    </div>`;
+  } else if(state==='prompt-loaded'){
+    c.className='card';
+    c.style.padding='16px';
+    c.innerHTML=`<div style="text-align:center">
+      <div style="font-size:.85rem;color:var(--green-text);margin-bottom:10px">✅ <strong style="color:#1f2937">${formatDateLong(fecha)}</strong> ya tiene asistencia cargada</div>
+      ${cargadoPorHtml}
+      <button class="btn btn-primary" style="margin-top:10px" onclick="loadDateData('${fecha}')">Ver / Editar</button>
+    </div>`;
+  } else if(state==='banner-new'){
+    c.className='date-banner new';
+    c.style.padding='';
+    c.innerHTML=`📝&nbsp;<strong>${formatDateLong(fecha)}</strong>&nbsp;— sin datos, nuevo registro`;
+  } else if(state==='banner-loaded'){
+    c.className='date-banner loaded';
+    c.style.padding='';
+    c.innerHTML=`<div>✅&nbsp;<strong>${formatDateLong(fecha)}</strong>&nbsp;— datos cargados${cargadoPor?` <span style="font-weight:400;opacity:.85">· Cargado por: ${cargadoPor}</span>`:''}</div>`;
+  }
+}
+
+async function onDateChange(fecha){
+  document.getElementById('form-body').style.display='none';
+
+  if(!fecha){
+    showEmptyState();
+    return;
+  }
+
+  renderStatusCard('checking',fecha);
+  const records=await fetchAttendanceForDate(fecha);
+  const hasData=records&&records.length>0;
+  renderStatusCard(hasData?'prompt-loaded':'prompt-new',fecha,records);
+}
+
+function resetForm(){
+  document.getElementById('form-body').style.display='none';
+  const fecha=document.getElementById('att-date').value;
+  onDateChange(fecha);
+}
+
+function loadDateData(fecha){
+  if(!fecha)return;
+  renderForm();
+  document.getElementById('form-body').style.display='block';
+
+  const records=cachedDateData[fecha]||[];
+  if(records.length>0){
+    applyFormData(records);
+    renderStatusCard('banner-loaded',fecha,records);
+  } else {
+    activePlayers().forEach((_,i)=>setStatus(i,defaultStatus));
+    renderStatusCard('banner-new',fecha);
+  }
+}
+
+function applyFormData(records){
+  const ap=activePlayers();
+  // Reset all to P first
+  ap.forEach((_,i)=>setStatus(i,'P'));
+  // Build lookup map: key resuelto (id de jugador, o nombre crudo si no se reconoce) -> {estado, obs}
+  const map={};
+  records.forEach(r=>{map[resolvePlayerKey(r)]={estado:r.estado,obs:r.observacion||''};});
+  ap.forEach((p,i)=>{
+    const d=map[p.id];
+    if(d){
+      setStatus(i,d.estado);
+      if(d.estado==='J'&&d.obs){document.getElementById('obs-'+i).value=d.obs;}
+    }
+  });
+}
+
+function renderForm(){
+  const c=document.getElementById('att-list');
+  c.innerHTML='';
+  activePlayers().forEach((p,i)=>{
+    const div=document.createElement('div');
+    div.className='player-card status-P';
+    div.id='pc-'+i;
+    div.innerHTML=`
+      <div class="player-top">
+        <span class="name">${p.nombre}</span>
+        <div class="status-btns">
+          <button class="sel-P" onclick="setStatus(${i},'P')">P</button>
+          <button onclick="setStatus(${i},'E/A')">E/A</button>
+          <button onclick="setStatus(${i},'J')">J</button>
+          <button onclick="setStatus(${i},'A')">A</button>
+        </div>
+      </div>
+      <input type="text" class="obs-input" id="obs-${i}" placeholder="Motivo de justificación...">
+    `;
+    c.appendChild(div);
+  });
+}
+
+function setStatus(idx,st){
+  const card=document.getElementById('pc-'+idx);
+  if(!card)return;
+  card.className='player-card status-'+dotClass(st);
+  card.querySelectorAll('.status-btns button').forEach(b=>{
+    b.className='';
+    const bst=b.textContent.trim();
+    if(bst===st)b.className='sel-'+dotClass(st);
+  });
+  const obs=document.getElementById('obs-'+idx);
+  obs.className='obs-input'+(st==='J'?' show':'');
+  if(st!=='J')obs.value='';
+}
+
+function getFormData(){
+  const fecha=document.getElementById('att-date').value;
+  if(!fecha)return null;
+  const ts=localTimestamp();
+  const records=[];
+  activePlayers().forEach((p,i)=>{
+    const card=document.getElementById('pc-'+i);
+    const selBtn=card.querySelector('.status-btns button[class*="sel-"]');
+    let st='P';
+    if(selBtn){
+      const cls=selBtn.className;
+      if(cls.includes('sel-EA'))st='E/A';
+      else if(cls.includes('sel-J'))st='J';
+      else if(cls.includes('sel-A'))st='A';
+      else st='P';
+    }
+    const obs=document.getElementById('obs-'+i).value.trim();
+    records.push({timestamp:ts,fecha,jugador:p.nombre,jugadorId:p.id,estado:st,observacion:obs,cargadoPorNombre:myStaffName,cargadoPorId:myStaffId});
+  });
+  return {fecha,timestamp:ts,records};
+}
+
+async function saveAttendance(){
+  const data=getFormData();
+  if(!data){toast('Elegí una fecha','error');return;}
+
+  const btn=document.getElementById('btn-save');
+  btn.disabled=true;btn.textContent='Guardando...';
+
+  try{
+    // Guardar siempre en este dispositivo primero: esto es lo que permite
+    // que la app funcione sin conexión.
+    const key='att_'+data.fecha;
+    localStorage.setItem(key,JSON.stringify(data.records));
+
+    // Refrescar cache y "últimos días cargados" con lo recién guardado,
+    // para que la pantalla principal no siga mostrando la fecha como "sin datos"
+    cachedDateData[data.fecha]=data.records;
+    loadedDates.add(data.fecha);
+    renderDatesStrip(pickDate);
+    renderStatusCard('banner-loaded',data.fecha,data.records);
+    // Los reportes que estén cargados en memoria quedaron viejos: al entrar a
+    // Reportes se vuelven a traer del servidor.
+    invalidateReports();
+
+    if(!scriptUrl){
+      showSaveModal('ok',data.fecha,data.records.length);
+      return;
+    }
+
+    try{
+      await postToScript('saveAttendance',{data:data.records,overwrite:true});
+      // Si había una versión vieja de esta fecha en la cola (guardada offline), ya no hace falta
+      pendingQueue=pendingQueue.filter(p=>!(p.action==='saveAttendance'&&p.dedupeKey===data.fecha));
+      savePendingQueue();
+      renderPendingBanner();
+      fetchLoadedDates().then(()=>renderDatesStrip(pickDate)); // confirmar contra el servidor
+      showSaveModal('ok',data.fecha,data.records.length);
+    }catch(netErr){
+      // Sin conexión: ya quedó guardado en el dispositivo, lo encolamos para subirlo solo después
+      queuePendingAction('saveAttendance',{data:data.records,overwrite:true},data.fecha,'Asistencia del '+formatDateLong(data.fecha));
+      showSaveModal('offline',data.fecha,data.records.length);
+    }
+  }catch(e){
+    showSaveModal('error',data.fecha,0,e.message);
+  }finally{
+    btn.disabled=false;btn.textContent='Guardar Asistencia';
+  }
+}
+
+// ======================== MODAL DE CONFIRMACIÓN ========================
+function showSaveModal(status,fecha,count,errMsg){
+  const overlay=document.getElementById('save-modal-overlay');
+  const icon=document.getElementById('save-modal-icon');
+  const title=document.getElementById('save-modal-title');
+  const msg=document.getElementById('save-modal-msg');
+  const actions=document.getElementById('save-modal-actions');
+
+  if(status==='ok'){
+    icon.textContent='✅';
+    title.textContent='Asistencia guardada';
+    msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)} y ya se sincronizaron con la planilla.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();goToReports()">Ver reportes</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
+  } else if(status==='offline'){
+    icon.textContent='💾';
+    title.textContent='Guardado en el dispositivo';
+    msg.textContent=`Se guardaron ${count} registro${count!==1?'s':''} para el ${formatDateLong(fecha)} en este dispositivo. No hay conexión ahora — se van a subir solos a la planilla apenas vuelva internet.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal()">Entendido</button>`;
+  } else {
+    icon.textContent='⚠️';
+    title.textContent='No se pudo guardar';
+    msg.textContent=`Hubo un problema guardando la asistencia del ${formatDateLong(fecha)}${errMsg?': '+errMsg:''}.`;
+    actions.innerHTML=`
+      <button class="btn btn-primary" style="margin-top:0" onclick="closeSaveModal();saveAttendance();">Reintentar</button>
+      <button class="btn" style="background:var(--gray-light);color:var(--gray);margin-top:8px" onclick="closeSaveModal()">Cerrar</button>`;
+  }
+  overlay.style.display='flex';
+}
+
+function closeSaveModal(){
+  document.getElementById('save-modal-overlay').style.display='none';
+}
+
+// Ir a la pantalla de Reportes desde código (botón del modal de guardado).
+function goToReports(){
+  go('reports',document.querySelectorAll('.nav button')[1]);
+}
+
+// ======================== ESCRITURAS + SINCRONIZACIÓN OFFLINE ========================
+// POST genérico al Apps Script. Con mode:'no-cors' no podemos leer la
+// respuesta, pero si el fetch tira una excepción es una señal confiable de
+// que no hay conexión (o no llegó a la red), que es justo lo que necesitamos
+// para decidir si encolar el cambio o no.
+async function postToScript(action,payload){
+  await fetch(scriptUrl,{
+    method:'POST',mode:'no-cors',
+    headers:{'Content-Type':'text/plain'},
+    body:JSON.stringify({action,...payload})
+  });
+}
+
+function savePendingQueue(){localStorage.setItem('club_pending_queue',JSON.stringify(pendingQueue));}
+
+// Guarda (o reemplaza, si ya había uno igual) un cambio pendiente de subir.
+// dedupeKey identifica "lo mismo" para no acumular versiones viejas del mismo
+// cambio (ej. tildar y destildar Activo varias veces offline sobre el mismo jugador).
+function queuePendingAction(action,payload,dedupeKey,label){
+  pendingQueue=pendingQueue.filter(it=>!(it.action===action&&it.dedupeKey===dedupeKey));
+  pendingQueue.push({id:genId(),action,payload,dedupeKey,label,ts:Date.now()});
+  savePendingQueue();
+  renderPendingBanner();
+}
+
+// Hay un guardado de asistencia de esta fecha hecho localmente que todavía no
+// se subió a Sheets — no hay que pisarlo con lo que devuelva el servidor.
+function hasPendingSaveFor(fecha){
+  return pendingQueue.some(p=>p.action==='saveAttendance'&&p.dedupeKey===fecha);
+}
+
+let syncingPending=false;
+function renderPendingBanner(){
+  document.querySelectorAll('.pending-banner').forEach(el=>{
+    if(!pendingQueue.length){el.style.display='none';el.innerHTML='';return;}
+    el.style.display='flex';
+    const btnHtml=syncingPending
+      ? `<button class="btn-sm" style="background:var(--yellow);color:#fff;min-height:28px;padding:4px 10px;flex-shrink:0;opacity:.7" disabled>Sincronizando...</button>`
+      : `<button class="btn-sm" style="background:var(--yellow);color:#fff;min-height:28px;padding:4px 10px;flex-shrink:0" onclick="trySyncPending(false)">Sincronizar</button>`;
+    el.innerHTML=`<span>🔄 ${pendingQueue.length} cambio${pendingQueue.length!==1?'s':''} sin sincronizar${syncingPending?' (sincronizando...)':''}</span>${btnHtml}`;
+  });
+  const noPending=document.getElementById('no-pending-msg');
+  if(noPending)noPending.style.display=pendingQueue.length?'none':'block';
+}
+
+async function trySyncPending(silent){
+  if(syncingPending||!pendingQueue.length||!scriptUrl)return;
+  syncingPending=true;
+  renderPendingBanner();
+  let synced=0;
+  const toTry=[...pendingQueue];
+  for(const item of toTry){
+    try{
+      await postToScript(item.action,item.payload);
+      pendingQueue=pendingQueue.filter(p=>p.id!==item.id);
+      synced++;
+    }catch(e){
+      // Sigue sin conexión (u otro error de red): lo dejamos en cola para el próximo intento
+    }
+  }
+  savePendingQueue();
+  syncingPending=false;
+  renderPendingBanner();
+  if(!pendingQueue.length){
+    if(!silent)toast(`✓ Se sincronizaron ${synced} cambio${synced!==1?'s':''} pendiente${synced!==1?'s':''}`,'success');
+  }else if(synced){
+    if(!silent)toast(`✓ Se sincronizaron ${synced} de ${toTry.length}. Sigue sin conexión para el resto.`,'success');
+  }else if(!silent){
+    toast('No se pudo sincronizar: revisá tu conexión','error');
+  }
+}
+
+window.addEventListener('online',()=>trySyncPending(false));
+setInterval(()=>trySyncPending(true),60000);
+
+// ======================== GESTIÓN DE JUGADORES ========================
+function renderMgmt(){
+  const c=document.getElementById('mgmt-list');
+  c.innerHTML='';
+  players.forEach(p=>{
+    const active=isActive(p);
+    const d=document.createElement('div');
+    d.className='mgmt-item'+(active?'':' mgmt-item-inactive');
+    if(!active)d.style.opacity='.55';
+    const idAttr=(p.id||'').replace(/'/g,"\\'");
+
+    if(editingPlayer===p.id){
+      d.style.opacity='1';
+      d.innerHTML=`<input type="text" id="rename-input" value="${p.nombre.replace(/"/g,'&quot;')}" style="flex:1;padding:8px 10px;border:2px solid var(--primary);border-radius:8px;font-size:.9rem;font-family:inherit;margin-right:8px">
+        <button class="btn-sm" style="background:var(--green);color:#fff;min-height:32px;padding:5px 10px" onclick="confirmRename('${idAttr}')">✓</button>
+        <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 10px;margin-left:4px" onclick="cancelRename()">✕</button>`;
+      c.appendChild(d);
+      return;
+    }
+
+    d.innerHTML=`<span style="flex:1">${p.nombre}</span>
+      <button class="btn-sm btn-sec" style="min-height:32px;padding:5px 8px;margin-right:6px" title="Editar nombre" onclick="startRename('${idAttr}')">✏️</button>
+      <button class="btn-sm" style="background:${active?'var(--green-bg)':'var(--gray-light)'};color:${active?'var(--green-text)':'var(--gray)'};min-height:32px;padding:5px 12px"
+        onclick="togglePlayerActivo('${idAttr}')">${active?'✓ Activo':'Inactivo'}</button>`;
+    c.appendChild(d);
+  });
+}
+
+function startRename(id){
+  editingPlayer=id;
+  renderMgmt();
+  const inp=document.getElementById('rename-input');
+  if(inp){inp.focus();inp.select();}
+}
+
+function cancelRename(){
+  editingPlayer=null;
+  renderMgmt();
+}
+
+async function confirmRename(id){
+  const inp=document.getElementById('rename-input');
+  const newName=(inp?inp.value:'').trim();
+  const player=players.find(p=>p.id===id);
+  if(!player){toast('Jugador no encontrado','error');return;}
+  const oldName=player.nombre;
+  if(!newName){toast('El nombre no puede estar vacío','error');return;}
+  if(newName===oldName){cancelRename();return;}
+  if(players.find(p=>p.id!==id&&p.nombre.toLowerCase()===newName.toLowerCase())){
+    toast('Ya existe un jugador con ese nombre','error');return;
+  }
+
+  // Actualizar estado local: nombre y alias para el historial muy viejo sin JugadorID
+  player.nombre=newName;
+  sortPlayers();
+  dynamicAliases[oldName.toUpperCase()]=newName.toUpperCase();
+  saveAliases();
+  savePlayers();
+
+  editingPlayer=null;
+  renderMgmt();
+  renderForm();
+  invalidateReports(); // los reportes muestran el nombre viejo hasta recargarlos
+  // Si hay una fecha con el form abierto, recargarla para reflejar el nombre nuevo
+  const fecha=document.getElementById('att-date').value;
+  if(fecha&&document.getElementById('form-body').style.display!=='none'){
+    loadDateData(fecha);
+  }
+
+  if(!scriptUrl){toast('Nombre actualizado (local)','success');return;}
+  try{
+    await postToScript('renamePlayer',{id,newName,oldName});
+    pendingQueue=pendingQueue.filter(p=>!(p.action==='renamePlayer'&&p.dedupeKey===id));
+    savePendingQueue();renderPendingBanner();
+    toast('Nombre actualizado','success');
+  }catch(e){
+    queuePendingAction('renamePlayer',{id,newName,oldName},id,'Rename: '+oldName+' → '+newName);
+    toast('Nombre actualizado (se sincronizará cuando haya conexión)','success');
+  }
+}
+
+async function addPlayer(){
+  const inp=document.getElementById('new-name');
+  const name=inp.value.trim();
+  if(!name){toast('Ingresá un nombre','error');return;}
+  if(players.find(p=>p.nombre.toLowerCase()===name.toLowerCase())){toast('Ya existe','error');return;}
+  if(!scriptUrl){toast('Configurá la URL del Apps Script primero','error');return;}
+
+  const btn=document.querySelector('.add-row button');
+  btn.disabled=true;btn.textContent='...';
+  // El id lo genera el cliente: el guardado usa no-cors y no podemos leer
+  // la respuesta del servidor para recibir un id generado allá.
+  const id=genId();
+  // Agregar localmente primero — así funciona aunque no haya conexión
+  players.push({id,nombre:name});sortPlayers();savePlayers();
+  inp.value='';
+  renderForm();renderMgmt();invalidateReports();
+  try{
+    await postToScript('addPlayer',{name,id});
+    pendingQueue=pendingQueue.filter(p=>!(p.action==='addPlayer'&&p.dedupeKey===id));
+    savePendingQueue();renderPendingBanner();
+    toast('Jugador agregado en Sheets','success');
+  }catch(e){
+    queuePendingAction('addPlayer',{name,id},id,'Nuevo jugador: '+name);
+    toast('Jugador agregado (se sincronizará cuando haya conexión)','success');
+  }finally{
+    btn.disabled=false;btn.textContent='+';
+  }
+}
+
+async function togglePlayerActivo(id){
+  const player=players.find(p=>p.id===id);
+  if(!player){toast('Jugador no encontrado','error');return;}
+  const nowActive=!isActive(player); // estado al que va a pasar
+  if(nowActive)inactiveSet.delete(id);else inactiveSet.add(id);
+  saveInactiveSet();
+  renderMgmt();
+  invalidateReports(); // cambia quién aparece en los reportes
+  // Si el form de asistencia está abierto, refrescar la lista de jugadores activos
+  const fecha=document.getElementById('att-date').value;
+  if(fecha&&document.getElementById('form-body').style.display!=='none'){
+    loadDateData(fecha);
+  }
+  if(!scriptUrl)return;
+  try{
+    await postToScript('setPlayerActivo',{id,activo:nowActive,name:player.nombre});
+    pendingQueue=pendingQueue.filter(p=>!(p.action==='setPlayerActivo'&&p.dedupeKey===id));
+    savePendingQueue();renderPendingBanner();
+    toast(nowActive?'Jugador activado':'Jugador desactivado','success');
+  }catch(e){
+    queuePendingAction('setPlayerActivo',{id,activo:nowActive,name:player.nombre},id,'Estado de '+player.nombre);
+    toast((nowActive?'Jugador activado':'Jugador desactivado')+' (se sincronizará cuando haya conexión)','success');
+  }
+}
+
+// ======================== CUERPO TÉCNICO (¿quién sos?) ========================
+// blocking=true: primera vez en el dispositivo, no se puede cerrar sin elegir.
+// blocking=false: se abre desde Ajustes para cambiar quién está cargando.
+function openStaffPicker(blocking){
+  const overlay=document.getElementById('staff-picker-overlay');
+  const list=document.getElementById('staff-picker-list');
+  const enabled=staffList.filter(s=>s.habilitado);
+  if(!enabled.length){
+    if(blocking)return; // sin lista disponible (ej. primer uso sin conexión): no bloqueamos
+    toast('No hay personas cargadas en Cuerpo Técnico todavía','error');
+    return;
+  }
+  list.innerHTML=enabled.map(s=>
+    `<button class="btn btn-sec" style="margin-top:0;text-align:left" onclick="selectStaff('${s.id}')">${s.nombre}${s.cargo?' — '+s.cargo:''}</button>`
+  ).join('');
+  document.getElementById('staff-picker-cancel').style.display=blocking?'none':'block';
+  overlay.style.display='flex';
+}
+function closeStaffPicker(){
+  document.getElementById('staff-picker-overlay').style.display='none';
+}
+function selectStaff(id){
+  const s=staffList.find(x=>x.id===id);
+  if(!s)return;
+  myStaffId=s.id; myStaffName=s.nombre; myStaffCargo=s.cargo;
+  localStorage.setItem('club_staff_id',myStaffId);
+  localStorage.setItem('club_staff_name',myStaffName);
+  localStorage.setItem('club_staff_cargo',myStaffCargo);
+  document.getElementById('staff-picker-overlay').style.display='none';
+  renderStaffCfg();
+  toast('Vas a cargar asistencia como '+myStaffName,'success');
+}
+function renderStaffCfg(){
+  const el=document.getElementById('staff-cfg-current');
+  if(!el)return;
+  if(myStaffId){
+    el.innerHTML=`<div style="background:var(--green-bg);color:var(--green-text);border:1px solid #6ee7b7;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">👤 Estás cargando como: ${myStaffName}${myStaffCargo?' ('+myStaffCargo+')':''}</div>`;
+  } else {
+    el.innerHTML=`<div style="background:var(--yellow-bg);color:var(--yellow-text);border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;font-size:.85rem;font-weight:600">⚠️ Todavía no elegiste quién sos</div>`;
+  }
+}
+
+// ======================== AJUSTES ========================
+function saveCfg(){
+  scriptUrl=document.getElementById('cfg-url').value.trim();
+  localStorage.setItem('club_script_url',scriptUrl);
+  toast(scriptUrl?'URL guardada':'URL borrada','success');
+}
+function saveDefaultStatus(val){
+  defaultStatus=val;
+  localStorage.setItem('club_default_status',val);
+  highlightDefaultLabel();
+  toast('Estado por defecto: '+val,'success');
+}
+function highlightDefaultLabel(){
+  ['A','P'].forEach(v=>{
+    const lbl=document.getElementById('lbl-default-'+v);
+    if(lbl) lbl.style.borderColor=(v===defaultStatus)?(v==='A'?'var(--red)':'var(--green)'):'var(--border)';
+  });
+}
+
+// ======================== NOTIFICACIONES ========================
+function requestNotificationPermission(){
+  if('Notification' in window && Notification.permission==='default'){
+    Notification.requestPermission();
+  }
+}
+
+function sendNotification(title,body){
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.ready.then(reg=>{
+      reg.showNotification(title,{body,icon:'./icon-carga.svg'});
+    }).catch(()=>{});
+  }
+}
+</script>
+</body>
+</html>

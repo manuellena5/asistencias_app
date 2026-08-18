@@ -1,0 +1,78 @@
+// Servidor de prueba: sirve los archivos de la app y simula el Apps Script.
+// Solo para verificar localmente — NO forma parte de la app.
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const PORT = 8099;
+
+const PLAYERS = [
+  { nombre: 'ACOSTA MARTIN', activo: true, id: 'p1' },
+  { nombre: 'BENITEZ LUCAS', activo: true, id: 'p2' },
+  { nombre: 'CORDOBA NAHUEL', activo: true, id: 'p3' },
+  { nombre: 'DIAZ JONATAN', activo: true, id: 'p4' },
+  { nombre: 'ESPINOZA RAMIRO', activo: false, id: 'p5' }
+];
+
+const STAFF = [
+  { nombre: 'PEREZ JUAN', cargo: 'DT', habilitado: true, id: 's1' },
+  { nombre: 'GOMEZ CARLOS', cargo: 'PF', habilitado: true, id: 's2' }
+];
+
+const FECHAS = ['2026-08-04', '2026-08-06', '2026-08-11', '2026-08-13', '2026-08-18'];
+const ESTADOS = ['P', 'P', 'E/A', 'J', 'A'];
+
+function recordsFor(fecha) {
+  const fi = FECHAS.indexOf(fecha);
+  if (fi < 0) return [];
+  return PLAYERS.filter(p => p.activo).map((p, i) => ({
+    timestamp: fecha + 'T20:00:00.000',
+    fecha,
+    jugador: p.nombre,
+    estado: ESTADOS[(i + fi) % ESTADOS.length],
+    observacion: ESTADOS[(i + fi) % ESTADOS.length] === 'J' ? 'Trabajo' : '',
+    jugadorId: p.id,
+    cargadoPorNombre: STAFF[fi % 2].nombre,
+    cargadoPorId: STAFF[fi % 2].id
+  }));
+}
+
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
+
+http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x');
+
+  if (u.pathname === '/exec') {
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', c => body += c);
+      req.on('end', () => {
+        console.log('  [mock] POST recibido:', body.slice(0, 120));
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ status: 'success' }));
+      });
+      return;
+    }
+    const action = u.searchParams.get('action');
+    let out = { status: 'ok' };
+    if (action === 'getPlayers') out = { status: 'success', count: PLAYERS.length, players: PLAYERS };
+    else if (action === 'getStaff') out = { status: 'success', count: STAFF.length, staff: STAFF };
+    else if (action === 'getAttendanceDates') out = { status: 'success', dates: FECHAS };
+    else if (action === 'getAttendance') out = { status: 'success', data: recordsFor(u.searchParams.get('fecha')) };
+    else if (action === 'getAllAttendance') {
+      const all = [];
+      FECHAS.forEach(f => all.push(...recordsFor(f)));
+      out = { status: 'success', count: all.length, data: all };
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  let p = u.pathname === '/' ? '/index.html' : u.pathname;
+  const file = path.join(ROOT, p);
+  if (!file.startsWith(ROOT) || !fs.existsSync(file)) { res.writeHead(404); res.end('404'); return; }
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'text/plain' });
+  res.end(fs.readFileSync(file));
+}).listen(PORT, () => console.log('mock en http://localhost:' + PORT));

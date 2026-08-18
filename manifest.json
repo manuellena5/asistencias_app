@@ -1,8 +1,10 @@
 {
-  "name": "Club - Control de Asistencias",
+  "name": "Club - Asistencias (Consulta)",
   "short_name": "Asistencias",
-  "description": "Registro y consulta de asistencias a prácticas",
-  "start_url": "./asistencias_app.html",
+  "id": "/asistencias_app/consulta",
+  "description": "Consulta de reportes y asistencia por día",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#1a3a52",

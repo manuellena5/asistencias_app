@@ -1,0 +1,2 @@
+# Dependencias de la suite de prueba (_test/). No forman parte de la app.
+node_modules/

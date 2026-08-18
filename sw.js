@@ -1,14 +1,37 @@
-const CACHE_NAME = 'asistencias-v26';
+// ============================================================
+// Service Worker compartido por las dos apps (index.html y
+// carga.html). Un solo SW en la raíz cubre a ambas.
+//
+// REGLA: cada vez que se toque CUALQUIER archivo del proyecto
+// (html, css, js, manifest), hay que incrementar CACHE_NAME.
+// El SW es cache-first: sin cambiar la versión, los usuarios con
+// la PWA instalada siguen viendo la versión vieja para siempre.
+// ============================================================
+const CACHE_NAME = 'asistencias-v29';
+
 const CACHED_URLS = [
+  './index.html',
+  './carga.html',
   './asistencias_app.html',
+  './common.css',
+  './common.js',
+  './reports.js',
   './manifest.json',
-  './icon.svg'
+  './manifest-carga.json',
+  './icon.svg',
+  './icon-carga.svg'
 ];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_URLS))
+    caches.open(CACHE_NAME).then((cache) =>
+      // cache:'reload' evita que el HTTP cache del navegador nos devuelva la
+      // versión vieja de un archivo justo cuando estamos precacheando la nueva.
+      Promise.all(CACHED_URLS.map((url) =>
+        cache.add(new Request(url, { cache: 'reload' })).catch(() => { })
+      ))
+    )
   );
 });
 

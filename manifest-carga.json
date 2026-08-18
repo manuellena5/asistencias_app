@@ -1,0 +1,20 @@
+{
+  "name": "Club - Cargar Asistencia",
+  "short_name": "Cargar Asist.",
+  "id": "/asistencias_app/carga",
+  "description": "Carga de asistencia a prácticas para el cuerpo técnico",
+  "start_url": "./carga.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#065f46",
+  "theme_color": "#065f46",
+  "icons": [
+    {
+      "src": "icon-carga.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

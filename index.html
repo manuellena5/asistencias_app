@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a3a52">
+<link rel="icon" href="icon.svg">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="common.css">
+<title>Asistencias Club — Consulta</title>
+</head>
+<body>
+
+<!--
+  ============================================================
+  index.html — APP DE CONSULTA (solo lectura)
+
+  Muestra lo MISMO que la app de carga (mismos reportes, mismos
+  datos). La única diferencia es que desde acá no se puede tocar
+  nada: no hay formulario de asistencia ni gestión de plantel.
+
+  Esta app NO escribe en la planilla. Solo hace GET al Apps
+  Script: getAllAttendance, getAttendance, getAttendanceDates,
+  getPlayers, getStaff. Si estás por agregar un POST acá, va en
+  carga.html.
+  ============================================================
+-->
+
+<div id="boot-overlay">
+  <div class="sp" style="width:36px;height:36px;border-width:4px"></div>
+  <span>Cargando...</span>
+</div>
+
+<div class="header">
+  <h1 id="hdr-title">Reportes</h1>
+  <small id="hdr-sub">Ver estadísticas</small>
+</div>
+
+<div class="main">
+  <!-- ===== REPORTES (el markup lo inyecta reports.js) ===== -->
+  <div id="scr-reports" class="screen active"></div>
+
+  <!-- ===== DÍA (solo lectura) ===== -->
+  <div id="scr-day" class="screen">
+    <div class="readonly-note">👁️ Modo consulta — no se puede editar desde acá</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="date" id="day-date" class="date-input" style="margin-bottom:0" onchange="onDayDateChange(this.value)">
+      <button class="btn-sm btn-sec" style="min-height:48px;flex-shrink:0" onclick="setDayToday()">Hoy</button>
+    </div>
+    <div id="dates-strip" class="dates-strip">
+      <div class="strip-lbl">📋 Últimos días cargados:</div>
+      <div id="dates-chips" class="chips"></div>
+    </div>
+    <div id="day-out"></div>
+  </div>
+
+  <!-- ===== AJUSTES ===== -->
+  <div id="scr-config" class="screen">
+    <div class="card">
+      <div class="card-hdr">🔄 Actualización</div>
+      <div style="padding:14px">
+        <p style="font-size:.85rem;color:var(--gray);margin-bottom:12px">Si la app te muestra datos viejos o una versión anterior, usá este botón para limpiar el caché y forzar la descarga de la última versión.</p>
+        <button class="btn btn-primary" id="btn-force-update" onclick="forceUpdate()">Forzar actualización</button>
+        <button class="btn btn-sec" style="margin-top:8px" onclick="reloadData()">Recargar datos de la planilla</button>
+      </div>
+    </div>
+    <details class="card" style="margin-top:12px">
+      <summary style="padding:14px;cursor:pointer;font-weight:700;color:#1f2937;list-style:none" class="card-hdr">⚙️ Apps Script (avanzado)</summary>
+      <div style="padding:0 14px 14px">
+        <label style="display:block;font-weight:600;font-size:.85rem;margin-bottom:6px">URL del Web App</label>
+        <input type="text" id="cfg-url" placeholder="https://script.google.com/macros/s/..." style="width:100%;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:.85rem;margin-bottom:8px;font-family:inherit">
+        <p style="font-size:.75rem;color:var(--gray);margin-bottom:10px">Pegá la URL del Web App desplegado en Google Apps Script.</p>
+        <button class="btn btn-primary" onclick="saveCfg()">Guardar URL</button>
+        <p style="font-size:.75rem;color:var(--gray);margin-top:10px;padding:8px;background:var(--gray-light);border-radius:6px;border-left:3px solid var(--border)">ℹ️ La app ya viene con una URL configurada por defecto — no hace falta tocar esto. Solo modificá si se te indica hacerlo.</p>
+      </div>
+    </details>
+    <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:16px" id="version-footer"></p>
+  </div>
+</div>
+
+<div class="nav">
+  <button class="active" onclick="go('reports',this)"><span class="ico">📊</span>Reportes</button>
+  <button onclick="go('day',this)"><span class="ico">📅</span>Por día</button>
+  <button onclick="go('config',this)"><span class="ico">⚙️</span>Ajustes</button>
+</div>
+
+<script src="common.js"></script>
+<script src="reports.js"></script>
+<script>
+SCREEN_TITLES={
+  reports:{title:'Reportes',sub:'Ver estadísticas'},
+  day:{title:'Asistencia por día',sub:'Consulta de un entrenamiento'},
+  config:{title:'Ajustes',sub:'Configuración de la app'}
+};
+
+function onScreenChange(screen){
+  if(screen==='reports'&&!reportsLoaded)loadReports();
+}
+
+// ======================== INIT ========================
+document.addEventListener('DOMContentLoaded',async()=>{
+  initReportsScreen();
+  document.getElementById('cfg-url').value=scriptUrl;
+  document.getElementById('version-footer').textContent=
+    'v'+APP_VERSION+' · Consulta · Corte Clausura: 1 Jul 2026';
+
+  // Jugadores: Sheets es la fuente de verdad. Si falla, seguimos con el caché.
+  const okPlayers=await loadPlayersFromSheet();
+  if(!okPlayers&&!players.length){
+    toast('Sin conexión — no se pudo cargar la lista de jugadores','error');
+  }
+  // Cuerpo técnico: acá solo se usa para mostrar quién cargó cada día.
+  loadStaffFromSheet();
+
+  await fetchLoadedDates();
+  renderDatesStrip(pickDay);
+  onDayDateChange(''); // placeholder de la pantalla "Por día"
+
+  await loadReports();
+  hideBootOverlay();
+});
+
+async function reloadData(){
+  // Vaciar cachés de sesión y volver a pedir todo
+  cachedDateData={};
+  invalidateReports();
+  await loadPlayersFromSheet();
+  await fetchLoadedDates();
+  renderDatesStrip(pickDay);
+  await loadReports();
+  const fecha=document.getElementById('day-date').value;
+  if(fecha)onDayDateChange(fecha);
+  toast('Datos actualizados','success');
+}
+
+// ======================== VISTA POR DÍA (SOLO LECTURA) ========================
+function setDayToday(){
+  const d=todayStr();
+  document.getElementById('day-date').value=d;
+  onDayDateChange(d);
+}
+
+function pickDay(fecha){
+  go('day',document.querySelectorAll('.nav button')[1]);
+  document.getElementById('day-date').value=fecha;
+  onDayDateChange(fecha);
+}
+
+async function onDayDateChange(fecha){
+  const out=document.getElementById('day-out');
+  if(!fecha){
+    out.innerHTML='<div class="form-placeholder"><div class="ico-big">📅</div><p>Elegí una fecha<br>para ver la asistencia de ese día</p></div>';
+    return;
+  }
+  out.innerHTML=`<div class="card" style="padding:14px"><div style="display:flex;align-items:center;gap:10px">
+    <div style="width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
+    <span style="font-size:.9rem;color:var(--gray);font-weight:500">Buscando ${formatDateLong(fecha)}...</span>
+  </div></div>`;
+
+  const records=await fetchAttendanceForDate(fecha);
+
+  // Si mientras se hacía el fetch el usuario cambió de fecha, no pisar nada
+  if(document.getElementById('day-date').value!==fecha)return;
+
+  renderDayView(fecha,records);
+}
+
+function renderDayView(fecha,records){
+  const out=document.getElementById('day-out');
+
+  if(!records||!records.length){
+    out.innerHTML=`<div class="card" style="padding:20px;text-align:center">
+      <div style="font-size:2rem;margin-bottom:8px">📭</div>
+      <div style="font-size:.9rem;font-weight:600;margin-bottom:4px">${formatDateLong(fecha)}</div>
+      <div style="font-size:.85rem;color:var(--gray)">Todavía no hay asistencia cargada para este día.</div>
+    </div>`;
+    return;
+  }
+
+  // Contar por estado y ordenar: presentes primero, después E/A, J y ausentes
+  const orden={'P':0,'E/A':1,'J':2,'A':3};
+  const rows=records.map(r=>({
+    key:resolvePlayerKey(r),
+    nombre:displayName(resolvePlayerKey(r)),
+    estado:r.estado,
+    obs:r.observacion||''
+  })).sort((a,b)=>{
+    const oa=orden.hasOwnProperty(a.estado)?orden[a.estado]:9;
+    const ob=orden.hasOwnProperty(b.estado)?orden[b.estado]:9;
+    if(oa!==ob)return oa-ob;
+    return a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'});
+  });
+
+  const cnt={'P':0,'E/A':0,'J':0,'A':0};
+  rows.forEach(r=>{if(cnt.hasOwnProperty(r.estado))cnt[r.estado]++;});
+  const presentes=cnt['P']+cnt['E/A'];
+  const pct=rows.length?Math.round(presentes/rows.length*100):0;
+  const cargadoPor=records[0].cargadoPorNombre||'';
+
+  let h=`<div class="card">
+    <div class="card-hdr">${formatDateLong(fecha)}<span class="badge ${badgeClass(pct)}">${pct}% presente</span></div>
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="n" style="color:var(--green)">${cnt['P']}</div><div class="l">Presentes</div></div>
+      <div class="stat"><div class="n" style="color:var(--blue)">${cnt['E/A']}</div><div class="l">Entr. afuera</div></div>
+      <div class="stat"><div class="n" style="color:var(--yellow)">${cnt['J']}</div><div class="l">Justificados</div></div>
+      <div class="stat"><div class="n" style="color:var(--red)">${cnt['A']}</div><div class="l">Ausentes</div></div>
+    </div>
+    ${cargadoPor?`<div style="padding:0 14px 12px;font-size:.78rem;color:var(--gray)">👤 Cargado por: <strong>${cargadoPor}</strong></div>`:''}
+  </div>`;
+
+  h+=`<div class="card"><div class="card-hdr">Detalle (${rows.length} jugadores)</div>`;
+  rows.forEach(r=>{
+    const stLabel=ESTADO_LABEL[r.estado]||r.estado;
+    const color=(r.estado==='P'||r.estado==='E/A')?'var(--green)':r.estado==='J'?'var(--yellow-text)':'var(--red)';
+    h+=`<div class="ro-row">
+      <span class="dot ${dotClass(r.estado)}">${r.estado}</span>
+      <span class="ro-name">${r.nombre}</span>
+      <span class="ro-lbl" style="color:${color}">${stLabel}</span>
+    </div>`;
+    if(r.estado==='J'&&r.obs){
+      h+=`<div class="ro-obs">"${r.obs}"</div>`;
+    }
+  });
+  h+=`</div>`;
+
+  out.innerHTML=h;
+}
+
+// ======================== AJUSTES ========================
+function saveCfg(){
+  scriptUrl=document.getElementById('cfg-url').value.trim();
+  localStorage.setItem('club_script_url',scriptUrl);
+  toast(scriptUrl?'URL guardada':'URL borrada','success');
+}
+</script>
+</body>
+</html>
