@@ -5,6 +5,21 @@ const SHEET_ID = '1Smw2TaBSfPQG7gjtQn-2DI0PTtoZUtM5cTw7gtLMo4o';
 const ATTENDANCE_SHEET_NAME = 'Asistencias_App';
 const PLAYERS_SHEET_NAME = 'Jugadores';
 const STAFF_SHEET_NAME = 'CuerpoTecnico';
+const TIMEZONE = 'America/Argentina/Buenos_Aires';
+
+/**
+ * Normaliza el valor de la columna Fecha a 'YYYY-MM-DD'.
+ * Sheets deserializa las fechas como objetos Date; toISOString() las pasa a UTC
+ * y puede correr el dia segun el offset de la zona del proyecto, asi que
+ * formateamos siempre con la zona horaria explicita.
+ */
+function normalizeFecha(cell) {
+  if (!cell) return '';
+  if (cell instanceof Date) {
+    return Utilities.formatDate(cell, TIMEZONE, 'yyyy-MM-dd');
+  }
+  return cell.toString().trim();
+}
 
 /**
  * Main handler for GET requests
@@ -124,10 +139,7 @@ function saveAttendanceData(records, overwrite) {
       const values = sheet.getDataRange().getValues();
       // Iterate backwards to safely delete rows
       for (let i = values.length - 1; i >= 1; i--) {
-        const cellFecha = values[i][1];
-        const cellStr = cellFecha instanceof Date
-          ? cellFecha.toISOString().split('T')[0]
-          : cellFecha.toString();
+        const cellStr = normalizeFecha(values[i][1]);
         if (cellStr === fecha) {
           sheet.deleteRow(i + 1); // sheet rows are 1-indexed
         }
@@ -230,10 +242,7 @@ function getAttendanceData(fecha) {
 
     // Skip header row
     for (let i = 1; i < values.length; i++) {
-      const cellFecha = values[i][1];
-      const cellStr = cellFecha instanceof Date
-        ? cellFecha.toISOString().split('T')[0]
-        : (cellFecha || '').toString().trim();
+      const cellStr = normalizeFecha(values[i][1]);
       if (cellStr === fecha) {
         records.push({
           timestamp: values[i][0],
@@ -518,9 +527,7 @@ function getAttendanceDatesData() {
 
     for (let i = 1; i < values.length; i++) {
       if (!values[i][1]) continue;
-      const fecha = values[i][1] instanceof Date
-        ? values[i][1].toISOString().split('T')[0]
-        : values[i][1].toString().trim();
+      const fecha = normalizeFecha(values[i][1]);
       if (fecha) datesSet.add(fecha);
     }
 
@@ -550,9 +557,7 @@ function getAllAttendanceData() {
       if (!values[i][0]) continue; // skip empty rows
       records.push({
         timestamp:   values[i][0] ? values[i][0].toString() : '',
-        fecha:       values[i][1] ? (values[i][1] instanceof Date
-                      ? values[i][1].toISOString().split('T')[0]
-                      : values[i][1].toString()) : '',
+        fecha:       normalizeFecha(values[i][1]),
         jugador:     values[i][2] || '',
         estado:      values[i][3] || '',
         observacion: values[i][4] || '',

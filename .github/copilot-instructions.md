@@ -66,12 +66,11 @@ Patrón a seguir al editar:
 
 - `ContentService.TextOutput` **NO soporta** `.setHeader()`. Llamarlo lanza `TypeError` que rompe toda la respuesta. **Nunca usar `.setHeader()`**.
 - GAS maneja CORS automáticamente cuando el Web App está deployado como "Anyone can access".
-- Las fechas en Sheets se deserializan como objetos `Date` de JavaScript, no como strings. Siempre normalizar:
+- Las fechas en Sheets se deserializan como objetos `Date` de JavaScript, no como strings. Siempre normalizar con el helper `normalizeFecha()`:
   ```js
-  const dateStr = cellFecha instanceof Date
-    ? cellFecha.toISOString().split('T')[0]
-    : (cellFecha || '').toString().trim();
+  const dateStr = normalizeFecha(cellFecha);
   ```
+  **Nunca usar `toISOString()`** sobre esas celdas: pasa la fecha a UTC y corre el día según el offset de la zona horaria del proyecto. `normalizeFecha()` usa `Utilities.formatDate(cell, TIMEZONE, 'yyyy-MM-dd')` con la zona explícita de Argentina.
 - Deployar como: **Ejecutar como: tu cuenta** / **Acceso: Cualquier persona**.
 - Cada cambio en `apps_script.js` requiere **nuevo deployment** en GAS (no alcanza con guardar).
 
@@ -172,7 +171,8 @@ apps_script.js      # Código GAS (se copia/pega en el editor de GAS)
 
 ### Gotchas frecuentes
 - **CORS**: GAS lo maneja solo si el Web App es público. No agregar headers manuales.
-- **Fechas**: siempre comparar con `instanceof Date` en GAS.
+- **Fechas en GAS**: normalizar siempre con `normalizeFecha()` antes de comparar; nunca `toISOString()` (es UTC y corre el día).
+- **Fechas en el cliente**: "hoy" se calcula con `todayStr()`, que usa hora local. `new Date().toISOString()` da el día siguiente después de las 21:00 en Argentina.
 - **SW caché stale**: siempre versionar `CACHE_NAME` en cada cambio.
 - **Notificaciones**: usar `reg.showNotification()` vía SW, no el constructor directo.
 - **Re-deploy GAS**: guardar el archivo en GAS no es suficiente; hay que hacer "New deployment" o "Manage deployments → Deploy new version".

@@ -496,7 +496,13 @@ function clearForm(){
   showEmptyState();
 }
 
-function todayStr(){return new Date().toISOString().split('T')[0];}
+// Fecha local del dispositivo (no UTC): toISOString() adelanta un dia
+// despues de las 21:00 en Argentina (UTC-3) y "hoy" pasaba a ser manana.
+function todayStr(){
+  const d=new Date();
+  const pad=(n)=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+}
 
 function setToday(){
   const d=todayStr();
